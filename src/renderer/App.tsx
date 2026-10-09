@@ -205,7 +205,7 @@ export default function App() {
 
       {page === 'guide' && <Guide state={state} onAccount={() => setPage('account')} onSettings={() => setPage('settings')} onInstall={primary} external={goExternal} />}
       {page === 'updates' && <Updates state={state} working={working} check={() => void action('updates', () => api!.checkUpdates(), '업데이트 확인을 완료했습니다.')} />}
-      {page === 'account' && <Account state={state} working={working} login={login} logout={() => void action('logout', () => api!.logout(), '로그아웃했습니다.')} external={goExternal} loginHelp={state.operation?.kind === 'login' && state.operation.stage !== '계정 확인' ? <div className="login-help"><p>창이 없으면 주소를 Chrome·Edge 주소창에 붙여넣으세요.<br />런처를 열어둔 채 5분 안에 로그인을 완료해 주세요.</p><div><button className="button secondary" onClick={() => void copyLogin()}>로그인 주소 복사</button><button className="button light" onClick={() => void cancel()}>로그인 취소</button></div></div> : undefined} />}
+      {page === 'account' && <Account state={state} working={working} login={login} logout={() => void action('logout', () => api!.logout(), '로그아웃했습니다.')} external={goExternal} loginHelp={state.operation?.kind === 'login' && state.operation.stage !== '계정 확인' ? <div className="login-help"><p>별도 Microsoft 로그인 창에서 5분 안에 인증해 주세요.<br />팝업에서 진행이 안 되면 주소를 Chrome·Edge에 붙여넣으세요.</p><div><button className="button secondary" onClick={() => void copyLogin()}>로그인 주소 복사</button><button className="button light" onClick={() => void cancel()}>로그인 취소</button></div></div> : undefined} />}
       {page === 'settings' && <SettingsPage state={state} working={working} saving={busy === 'settings'} action={action} notify={notify} initialSection={settingsSection} />}
     </main>
 

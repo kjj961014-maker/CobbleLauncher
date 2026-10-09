@@ -35,7 +35,7 @@ async function main() {
     if (await closeToast.isVisible()) await closeToast.click();
     await page.mouse.move(0, 0);
     const png = await electron.evaluate(async ({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0];
+      const window = BrowserWindow.getAllWindows().find(item => item.webContents.getURL().startsWith('file:'));
       await window.webContents.insertCSS('*{animation:none!important;transition:none!important}');
       window.webContents.invalidate();
       await window.webContents.capturePage();
@@ -188,13 +188,25 @@ async function main() {
     check(afterDenials.settings.updateUrl === '' && afterDenials.operation === null && !afterDenials.game.running && afterDenials.installation.status === 'not-installed', 'rejected IPC requests leave settings and installation unchanged');
     check(!JSON.stringify(afterDenials).includes(fixtureKey), 'state and rejection logs still exclude dummy credential');
 
-    // Exercise the reported failure through the actual renderer and IPC: the
-    // OS opener never settles, no Microsoft page opens, and cancel must work.
-    await electron.evaluate(({ shell, clipboard }) => {
+    // A real isolated popup, with only its network navigation replaced by a
+    // stalled fixture. Never visit or inject scripts into an account page.
+    await electron.evaluate(({ BrowserWindow, shell, clipboard }) => {
       globalThis.__cobbleOriginalOpener = shell.openExternal;
       globalThis.__cobbleOriginalClipboardWrite = clipboard.writeText;
+      globalThis.__cobbleOriginalLoadURL = BrowserWindow.prototype.loadURL;
+      globalThis.__cobbleOriginalAuthFetch = globalThis.fetch;
       globalThis.__cobbleCopiedLogin = '';
-      shell.openExternal = () => new Promise(() => {});
+      globalThis.__cobblePopupUrl = '';
+      globalThis.__cobbleExternalCount = 0;
+      shell.openExternal = () => { globalThis.__cobbleExternalCount++; return new Promise(() => {}); };
+      BrowserWindow.prototype.loadURL = function(url, ...args) {
+        if (url.startsWith('https://login.microsoftonline.com/')) {
+          globalThis.__cobblePopupUrl = url;
+          globalThis.__cobblePopupId = this.id;
+          return new Promise(() => {});
+        }
+        return globalThis.__cobbleOriginalLoadURL.call(this, url, ...args);
+      };
       clipboard.writeText = value => { globalThis.__cobbleCopiedLogin = value; };
     });
     try {
@@ -202,6 +214,20 @@ async function main() {
       await page.getByRole('button', { name: '알림 닫기', exact: true }).click().catch(() => {});
       await page.getByRole('button', { name: '로그인하고 시작하기', exact: true }).click();
       await page.getByRole('button', { name: '로그인 주소 복사', exact: true }).waitFor();
+      const popupSecurity = await electron.evaluate(({ BrowserWindow }) => {
+        const popup = BrowserWindow.fromId(globalThis.__cobblePopupId);
+        const preferences = popup.webContents.getLastWebPreferences();
+        const owner = popup.getParentWindow();
+        let blocked = false;
+        popup.webContents.emit('will-navigate', { preventDefault() { blocked = true; } }, 'https://evil.invalid/');
+        return { exists:!!popup, parent:!!owner, isolated:popup.webContents.session !== owner.webContents.session,
+          preload:preferences.preload, node:preferences.nodeIntegration, sandbox:preferences.sandbox,
+          context:preferences.contextIsolation, webSecurity:preferences.webSecurity, blocked,
+          external:globalThis.__cobbleExternalCount };
+      });
+      check(popupSecurity.exists && popupSecurity.parent && popupSecurity.external === 0, 'login opens a dedicated child popup without invoking the system browser');
+      check(popupSecurity.isolated && !popupSecurity.preload && !popupSecurity.node && popupSecurity.sandbox && popupSecurity.context && popupSecurity.webSecurity, 'remote login popup has isolated storage, sandbox, and no launcher preload or Node access');
+      check(popupSecurity.blocked, 'login popup rejects navigation to an unrelated site');
       check(await page.getByRole('button', { name: '로그인 주소 복사', exact: true }).evaluate(element => element.getBoundingClientRect().bottom < document.querySelector('.launch-dock').getBoundingClientRect().top), 'browser fallback remains visible above the dock at minimum window size');
       check(await page.getByRole('button', { name: '로그인 진행 중', exact: true }).isDisabled(), 'pending login is identified as login, not game preparation');
       await capture('login-browser-fallback');
@@ -216,18 +242,59 @@ async function main() {
       await page.getByRole('button', { name: '로그인 취소', exact: true }).click();
       await page.waitForFunction(async () => !(await window.launcher.getState()).operation && !document.querySelector('.launch-button').disabled);
       check((await page.evaluate(() => window.launcher.getState())).auth.status === 'error', 'cancellation releases pending browser login and enables retry');
+      check(await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length === 1), 'cancel closes the pending login popup');
       const expiredCopy = await reject('copyLoginLink');
       check(expiredCopy.rejected, 'finished login cannot copy an expired authorization link');
       await page.getByRole('button', { name: 'Microsoft 계정 로그인', exact: true }).click();
-      await page.getByRole('button', { name: '로그인 취소', exact: true }).click();
+      await page.getByRole('button', { name: '로그인 취소', exact: true }).waitFor();
+      await electron.evaluate(({ BrowserWindow }) => BrowserWindow.fromId(globalThis.__cobblePopupId).close());
       await page.waitForFunction(async () => !(await window.launcher.getState()).operation && !document.querySelector('.launch-button').disabled);
-      check((await page.evaluate(() => window.launcher.getState())).operation === null, 'a second login can be cancelled after the first stalled opener');
+      check((await page.evaluate(() => window.launcher.getState())).operation === null, 'closing the popup cancels login and allows another attempt');
       await capture('login-cancelled');
+
+      // Complete the real loopback/state/PKCE path with fake upstream responses.
+      // This proves popup cleanup cannot cancel the subsequent token exchange.
+      await electron.evaluate(({ BrowserWindow }) => {
+        globalThis.__cobblePopupClosedAtExchange = false;
+        globalThis.fetch = async (url) => {
+          let body;
+          if (url.endsWith('/token')) {
+            globalThis.__cobblePopupClosedAtExchange = BrowserWindow.getAllWindows().length === 1;
+            body = { access_token:'ui-ms-fixture', refresh_token:'ui-refresh-fixture' };
+          } else if (url.includes('user.auth.xboxlive.com') || url.includes('xsts.auth.xboxlive.com')) {
+            body = { Token:'ui-xbox-fixture', DisplayClaims:{ xui:[{ uhs:'123456' }] } };
+          } else if (url.endsWith('/login_with_xbox')) {
+            body = { access_token:'ui-minecraft-fixture', expires_in:3600 };
+          } else if (url.endsWith('/entitlements/mcstore')) {
+            body = { items:[{ name:'game_minecraft' }] };
+          } else if (url.endsWith('/minecraft/profile')) {
+            body = { id:'0123456789abcdef0123456789abcdef', name:'PopupFixture' };
+          } else throw new Error('Unexpected authentication fixture endpoint');
+          return new Response(JSON.stringify(body), { status:200 });
+        };
+      });
+      await page.getByRole('button', { name: 'Microsoft 계정 로그인', exact: true }).click();
+      await page.getByRole('button', { name: '로그인 취소', exact: true }).waitFor();
+      const callbackStatus = await electron.evaluate(async () => {
+        const authorization = new URL(globalThis.__cobblePopupUrl);
+        const callback = new URL(authorization.searchParams.get('redirect_uri'));
+        callback.hostname = '127.0.0.1';
+        callback.search = new URLSearchParams({ code:'ui-code-fixture', state:authorization.searchParams.get('state') });
+        return (await globalThis.__cobbleOriginalAuthFetch(callback)).status;
+      });
+      await page.waitForFunction(async () => (await window.launcher.getState()).auth.status === 'signed-in');
+      check(callbackStatus === 200 && await electron.evaluate(() => globalThis.__cobblePopupClosedAtExchange), 'verified callback automatically closes popup before token exchange without cancelling authentication');
+      check((await page.evaluate(() => window.launcher.getState())).profile.name === 'PopupFixture', 'popup flow completes ownership and profile validation using explicit test fixtures');
+      await page.evaluate(() => window.launcher.logout());
     } finally {
       await page.evaluate(() => window.launcher.cancelOperation());
-      await electron.evaluate(({ shell, clipboard }) => {
+      await page.waitForFunction(async () => !(await window.launcher.getState()).operation);
+      await page.evaluate(() => window.launcher.logout());
+      await electron.evaluate(({ BrowserWindow, shell, clipboard }) => {
         shell.openExternal = globalThis.__cobbleOriginalOpener;
         clipboard.writeText = globalThis.__cobbleOriginalClipboardWrite;
+        BrowserWindow.prototype.loadURL = globalThis.__cobbleOriginalLoadURL;
+        globalThis.fetch = globalThis.__cobbleOriginalAuthFetch;
         delete globalThis.__cobbleCopiedLogin;
       });
       await page.evaluate(() => window.launcher.saveSettings({ microsoftClientId: '' }));

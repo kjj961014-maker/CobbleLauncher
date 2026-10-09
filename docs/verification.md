@@ -1,6 +1,6 @@
 # 개발 검증 기록
 
-검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.1 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
+검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.2 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
 
 ## 실제 파일·프로세스로 확인한 항목
 
@@ -14,7 +14,7 @@
 | NeoForge | 공식 21.1.252 installer와 실제 Java processor 실행 완료. core로 설치된 버전 JSON과 라이브러리 해석 성공 |
 | 재설치/캐시 | 같은 테스트 instance에 설치를 다시 실행해 정상 파일을 재사용하고 강화한 경로·호스트 검증 통과 |
 | Electron | TypeScript·Vite production 빌드, Electron 창·preload IPC 실제 실행 및 화면 캡처 통과 |
-| UI 조작 | 실제 Electron 격리 프로필에서 첫 안내·설정 저장·5개 메뉴·최소1000×700 배치·오류 없는 렌더링·Windows safeStorage 암호화·평문 키 비노출·인증 없는 설치 차단·로그인 창 미실행 복구 등 39개 검사 통과. 최신 세부 기록은 test-results/ui-electron/report.json |
+| UI 조작 | 실제 Electron 격리 프로필에서 첫 안내·설정 저장·5개 메뉴·최소1000×700 배치·오류 없는 렌더링·Windows safeStorage 암호화·평문 키 비노출·인증 없는 설치 차단·로그인 팝업 격리·취소·자동 닫기 등 45개 검사 통과. 최신 세부 기록은 test-results/ui-electron/report.json |
 | 패키징 | Windows x64 NSIS 설치형 EXE 생성. 개발 PC의 격리 설치 폴더에 실제 NSIS 설치(종료0)→설치된 EXE와 IPC smoke 검사→테스트 설치 제거(종료0) 통과. win-unpacked 패키지 실행도 통과. 최종 바이너리 해시는 test-results/release-verification.json |
 | 운영 CLI | 테스트용 개인키 생성·공지 초안 서명·서명 재검증 실행 통과. 테스트 개인키는 private 아래로 배포에서 제외 |
 | 라이선스 | production 의존성 고지 생성. 게임/모드/팩 ZIP/overrides/셰이더/MCP 자료/테스트 자격증명은 EXE에 포함하지 않음 |
@@ -23,7 +23,7 @@
 
 ## 통제된 응답과 실제 임시 파일로 검증한 항목
 
-`npm test`는 현재 55개 테스트가 통과했습니다. 새 변경 후의 정확한 합계는 실행 결과를 기준으로 합니다.
+`npm test`는 현재 57개 테스트가 통과했습니다. 새 변경 후의 정확한 합계는 실행 결과를 기준으로 합니다.
 
 - 공식 OAuth PKCE/state·callback 위조·취소·시간 초과·토큰 갱신·Xbox 사용자 불일치·가족 제한·Java 소유권 거부: 실제 loopback 서버와 통제된 인증 응답 사용. 실제 Microsoft 로그인을 대체한 완료 판정이 아닙니다.
 - HTTPS redirect·호스트 제한·자격증명 헤더 제거·Range 206/200/416·스트림 중단·완성 캐시·해시 오류·빈 파일 패치: 통제된 HTTP 응답과 실제 파일 쓰기 사용.
@@ -56,3 +56,13 @@ OS 브라우저 실행 Promise가 끝나지 않아도 정상 callback·취소·5
 기본 브라우저가 열리지 않으면 사용자가 로그인 주소를 Chrome 또는 Edge에 직접 붙여넣을 수 있습니다. 로그인 중에는 단계 안내를 표시하며, 설정 저장 버튼이 관계없는 로그인 작업 때문에 회전하지 않습니다. 실제 Microsoft 로그인 성공과 Minecraft 앱 승인은 여전히 별도 검증 항목입니다.
 
 0.1.1 NSIS 설치 파일로 실제 사용자 설치 경로를 업데이트했고 종료 코드는 0이었습니다. 사용자 설정 JSON의 설치 전후 SHA-256이 일치하여 Client ID와 설정 보존을 확인했습니다. 설치된 0.1.1 EXE를 별도 QA 프로필에서 실행해 화면·preload IPC·오류 없음과 버전을 확인했으며, 최종 ASAR/main 해시 일치와 개인 자료 제외도 확인했습니다. 이 버전의 설치 제거 검사는 다시 수행하지 않았습니다. 설치 파일 SHA-256: `f7be0f38aa85a0c00141c9348f993bbc7a3db87d6d99e86c50328e0fdcab301c`.
+
+## 0.1.2 Microsoft 로그인 팝업
+
+기본 로그인 창을 독립된 Electron 자식 창으로 변경했습니다. Microsoft 공식 페이지를 그대로 표시하며, preload·Node·런처 IPC 권한 없이 sandbox와 contextIsolation을 적용합니다. 매 시도마다 메모리 전용 세션을 사용하고 창 종료 시 웹 저장소를 지웁니다. 최상위 이동은 등록된 Microsoft 호스트와 현재 시도의 정확한 loopback 주소로 제한합니다. 팝업이 지원하지 않는 로그인 방식은 기존 로그인 주소 복사로 외부 브라우저에서 계속할 수 있습니다.
+
+실제 Electron 검사에서 팝업 생성·권한 격리·외부 사이트 차단·취소 버튼·창 닫기·재시도를 확인했습니다. 통제된 인증 서버 응답으로 정상 callback 직후 팝업이 닫히고 소유권/프로필 검사가 계속되는 것도 확인했습니다. 자동 테스트 57개와 앱 검사 45개가 통과했습니다.
+
+별도 임시 프로필에서 실제 등록 앱의 Microsoft 페이지가 팝업에 표시되는 것을 캡처했습니다(`test-results/popup-live/microsoft-popup.png`). 확인 시점에는 Microsoft가 `redirect_uri is not valid`를 반환했습니다. 운영자가 Azure의 모바일 및 데스크톱 애플리케이션 설정에 `http://localhost/callback`을 등록해야 합니다. 이 주소를 브라우저로 직접 방문하는 절차가 아님을 사용 안내에 명시했습니다. 실제 계정 로그인 성공은 아직 확인하지 않았습니다.
+
+실제 사용자 설치를 0.1.2로 업데이트했고 NSIS 종료 코드는 0입니다. 설정 JSON의 설치 전후 SHA-256이 일치하며, 설치된 EXE의 별도 QA 실행에서 0.1.2 버전·화면·IPC·오류 없음이 확인되었습니다. 설치 파일 SHA-256: `8ea2c0627ff9d23d3cada934a34ca597f556113af59bcca2ab5dabb3f84b25fd`.

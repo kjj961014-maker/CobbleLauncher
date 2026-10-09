@@ -44,9 +44,9 @@ Client ID는 앱을 식별하는 공개 값입니다. 런처 설정에 입력할
    ```
 
 3. 경로의 `/callback`까지 정확하게 입력합니다. 현재 런처는 로그인할 때 임시 포트를 선택하여 `http://localhost:<임시 포트>/callback`으로 돌아옵니다. Microsoft는 localhost 리디렉션을 비교할 때 포트를 무시하지만 경로는 구분하므로, 포트별 URI를 여러 개 등록할 필요가 없습니다. [공식 localhost 예외와 경로 규칙](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url#localhost-exceptions)
-4. **클라이언트 비밀은 생성하거나 런처에 넣지 않습니다.** 현재 구현은 시스템 브라우저의 인증 코드 흐름에 S256 PKCE와 무작위 state 검증을 사용합니다. Microsoft는 데스크톱 앱의 PKCE 사용을 권장하며, 공개 클라이언트에 클라이언트 비밀을 넣지 않도록 명시합니다. [공식 인증 코드·PKCE 설명](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)
+4. **클라이언트 비밀은 생성하거나 런처에 넣지 않습니다.** 현재 구현은 S256 PKCE와 무작위 state 검증을 사용하며, 별도 Microsoft 팝업과 외부 브라우저 대체 경로 모두 같은 loopback 반환 주소를 사용합니다. Microsoft는 데스크톱 앱의 PKCE 사용을 권장하며, 공개 클라이언트에 클라이언트 비밀을 넣지 않도록 명시합니다. [공식 인증 코드·PKCE 설명](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)
 
-브라우저에서 성공한 로그인 결과는 같은 PC의 런처로 전달됩니다. 운영자가 공개 웹사이트에서 `/callback` 서버를 호스팅할 작업은 없습니다.
+`http://localhost/callback`은 위 Azure 설정 칸에 저장하는 값이며, 브라우저 주소창에 입력해 방문하는 사이트가 아닙니다. 로그인 결과는 같은 PC에서 해당 시도 동안만 열린 임시 포트의 런처로 전달됩니다. 운영자가 공개 웹사이트에서 `/callback` 서버를 호스팅할 작업은 없습니다. Microsoft 오류에 `redirect_uri is not valid`가 표시되면 **모바일 및 데스크톱 애플리케이션** 플랫폼에 이 주소가 저장됐는지 확인합니다.
 
 ## 4. Minecraft Services 앱 승인
 

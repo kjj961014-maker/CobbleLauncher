@@ -7,6 +7,7 @@ import { launch as launchGame, Version } from '@xmcl/core';
 import { z } from 'zod';
 import type { LauncherState, Settings } from '../shared/types';
 import { authenticate, refresh, type Session } from './auth';
+import { openLoginWindow, type LoginWindow } from './login-window';
 import { installMinecraft } from './minecraft';
 import { installModpack, ensurePackArchive, recoverModpack, type PackCatalog } from './modpack';
 import { fetchSecure, checkFile } from './download';
@@ -175,20 +176,29 @@ async function initialize() {
   handle('repair',async()=>{const current=await readJson<{version?:string;sequence?:number}>(path.join(state.settings.gameDirectory,'.cobble','update-installed.json'),{});if((current.sequence??0)>0){await runOperation('repair-runtime',async signal=>{await installMinecraft({gameDirectory:state.settings.gameDirectory,minecraftVersion:pack.minecraftVersion,loaderVersion:pack.loader.version,signal,onProgress:(stage,message,amount,bytes)=>progress(stage,message,amount*100,bytes)});});await checkUpdates(true,true);await runOperation('repair',async()=>{await validateInstalled();log('info','현재 서명된 패치 파일을 검사했습니다.');});}else await install();});
   handle('login',()=>runOperation('login',async signal=>{
     state.auth={status:'signing-in'};publish(true);
+    let loginWindow:LoginWindow|undefined;
+    let loginProblem:string|undefined;
     try{
       session=await authenticate(state.settings.microsoftClientId,{
-        openExternal:url=>shell.openExternal(url),signal,
+        openExternal:url=>{
+          loginWindow=openLoginWindow(url,{
+            parent:window!,show:!isUITest,
+            onClose:()=>{if(!signal.aborted)operation?.abort();},
+            onProblem:message=>{if(pendingLoginUrl&&!signal.aborted){loginProblem=message;state.auth={status:'signing-in',message};publish(true);}},
+          });
+          return loginWindow.ready;
+        },signal,
         onAuthorizationUrl:url=>{pendingLoginUrl=url;},
         onProgress:stage=>{
-          const message=stage==='opening'?'Microsoft 로그인 창을 열고 있습니다. 창이 없으면 로그인 주소를 복사해 주세요.':stage==='waiting'?'브라우저에서 Microsoft 로그인을 완료해 주세요.':'Minecraft 사용 권한과 프로필을 확인하고 있습니다.';
-          if(stage==='verifying')pendingLoginUrl=null;
+          const message=stage==='opening'?'Microsoft 로그인 팝업을 열고 있습니다.':stage==='waiting'?(loginProblem??'별도 팝업에서 Microsoft 로그인을 완료해 주세요.'):'Minecraft 사용 권한과 프로필을 확인하고 있습니다.';
+          if(stage==='verifying'){pendingLoginUrl=null;loginWindow?.close();}
           state.auth={status:'signing-in',message};
           progress(stage==='verifying'?'계정 확인':'Microsoft 로그인',message,0);publish(true);
         }
       });
       sessionClientId=state.settings.microsoftClientId;await vault.set('session',{session,clientId:sessionClientId});state.profile=session.profile;state.auth={status:'signed-in'};log('info',`${session.profile.name} 정품 프로필 확인 완료`);
     }catch(error){state.auth={status:'error',message:redact(error instanceof Error?error.message:String(error))};throw error;}
-    finally{pendingLoginUrl=null;}
+    finally{pendingLoginUrl=null;loginWindow?.close();}
   }));
   handle('copyLoginLink',()=>{
     if(!pendingLoginUrl||state.operation?.kind!=='login')throw new Error('진행 중인 Microsoft 로그인이 없습니다. 다시 로그인을 시작하세요.');
