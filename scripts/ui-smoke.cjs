@@ -69,7 +69,13 @@ async function main() {
     await page.getByRole('button', { name: '설정 저장', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'UUID' }).waitFor();
     check((await page.evaluate(() => window.launcher.getState())).settings.microsoftClientId === '', 'invalid Client ID prevented before IPC save');
-    await page.getByLabel('애플리케이션 Client ID').fill('');
+    await page.getByRole('navigation', { name:'주 메뉴' }).getByRole('button', { name:'홈', exact:true }).click();
+    await page.getByText('작성 중인 설정을 보관하고 있어요. 저장하면 적용됩니다.', { exact:true }).waitFor();
+    await page.getByRole('button', { name:'계속 수정', exact:true }).click();
+    check(await page.getByLabel('애플리케이션 Client ID').inputValue() === 'invalid-client-id', 'unsaved settings survive page navigation after a failed save');
+    await page.getByLabel('CurseForge API 키', { exact:true }).fill('draft-only-key-fixture');
+    await page.getByRole('button', { name:'변경 취소', exact:true }).click();
+    check(await page.getByLabel('애플리케이션 Client ID').inputValue() === '' && await page.getByLabel('CurseForge API 키', { exact:true }).inputValue() === '' && await page.getByRole('button', { name:'설정 저장', exact:true }).isDisabled(), 'discard restores saved settings and clears the unsaved secret from the form');
     await page.getByRole('button', { name: '게임 환경', exact: true }).click();
     const memory = page.getByRole('slider', { name: '게임 메모리 할당량' });
     const before = Number(await memory.inputValue());
@@ -188,6 +194,70 @@ async function main() {
     check(afterDenials.settings.updateUrl === '' && afterDenials.operation === null && !afterDenials.game.running && afterDenials.installation.status === 'not-installed', 'rejected IPC requests leave settings and installation unchanged');
     check(!JSON.stringify(afterDenials).includes(fixtureKey), 'state and rejection logs still exclude dummy credential');
 
+    const settingsBeforeFailure = await fs.readFile(path.join(userData, 'settings.json'), 'utf8');
+    await electron.evaluate(({ app }) => {
+      const io = process.getBuiltinModule('fs').promises;
+      const target = process.getBuiltinModule('path').join(app.getPath('userData'), 'settings.json');
+      globalThis.__cobbleOriginalRename = io.rename;
+      io.rename = async (from, to) => {
+        if (to === target) throw Object.assign(new Error('Simulated settings write failure'), { code:'EACCES' });
+        return globalThis.__cobbleOriginalRename(from, to);
+      };
+    });
+    try {
+      const failure = await reject('saveSettings', { memoryMb:afterDenials.settings.memoryMb === 2048 ? 2560 : 2048, curseforgeApiKey:'replacement-key-that-must-not-be-saved' });
+      check(failure.rejected && (await page.evaluate(() => window.launcher.getState())).settings.memoryMb === afterDenials.settings.memoryMb && await fs.readFile(path.join(userData, 'settings.json'), 'utf8') === settingsBeforeFailure, 'a failed atomic settings write leaves both effective preferences and the saved file unchanged');
+      check((await fs.readFile(encryptedFile)).equals(encrypted), 'failed preferences write cannot replace the existing encrypted API key');
+    } finally {
+      await electron.evaluate(() => { process.getBuiltinModule('fs').promises.rename = globalThis.__cobbleOriginalRename; });
+    }
+
+    await electron.evaluate(() => {
+      const io = process.getBuiltinModule('fs').promises;
+      let injected = false;
+      io.rename = async (from, to) => {
+        if (!injected && to.endsWith('curseforge.encrypted')) { injected = true; throw new Error('Simulated credential write failure'); }
+        return globalThis.__cobbleOriginalRename(from, to);
+      };
+    });
+    try {
+      const failure = await reject('saveSettings', { memoryMb:afterDenials.settings.memoryMb === 2048 ? 2560 : 2048, curseforgeApiKey:'replacement-key-that-must-not-be-saved' });
+      const preserved = await electron.evaluate(async ({ app, safeStorage }, expected) => {
+        const io = process.getBuiltinModule('fs').promises;
+        const directory = process.getBuiltinModule('path').join(app.getPath('userData'), 'credentials');
+        const bytes = await io.readFile(process.getBuiltinModule('path').join(directory, 'curseforge.encrypted'));
+        return JSON.parse(safeStorage.decryptString(bytes)) === expected && !(await io.readdir(directory)).some(name => name.endsWith('.tmp'));
+      }, fixtureKey);
+      check(failure.rejected && preserved && await fs.readFile(path.join(userData, 'settings.json'), 'utf8') === settingsBeforeFailure, 'credential write failure restores saved preferences and the old key without leaving temporary credential files');
+    } finally {
+      await electron.evaluate(() => { process.getBuiltinModule('fs').promises.rename = globalThis.__cobbleOriginalRename; });
+    }
+
+    // Switch servers while the first status response is still outstanding.
+    const net = require('node:net');
+    let oldSocket, oldReady;
+    const oldRequested = new Promise(resolve => { oldReady = resolve; });
+    const serverReply = count => {
+      const data = Buffer.from(JSON.stringify({ players:{ online:count, max:10 } }));
+      return Buffer.concat([Buffer.from([data.length + 2, 0, data.length]), data]);
+    };
+    const oldServer = net.createServer(socket => { oldSocket = socket; socket.on('error', () => {}); socket.once('data', oldReady); });
+    const newServer = net.createServer(socket => { socket.on('error', () => {}); socket.once('data', () => socket.end(serverReply(10))); });
+    await Promise.all([oldServer, newServer].map(server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve))));
+    try {
+      await page.evaluate(port => window.launcher.saveSettings({ serverHost:'127.0.0.1', serverPort:port }), oldServer.address().port);
+      await oldRequested;
+      await page.evaluate(port => window.launcher.saveSettings({ serverPort:port }), newServer.address().port);
+      await page.waitForFunction(async () => (await window.launcher.getState()).server.players === 10);
+      oldSocket.end(serverReply(1));
+      await page.waitForTimeout(150);
+      check((await page.evaluate(() => window.launcher.getState())).server.players === 10, 'late status from a previous server cannot overwrite the newly configured server');
+    } finally {
+      oldSocket?.destroy();
+      await Promise.all([oldServer, newServer].map(server => new Promise(resolve => server.close(resolve))));
+      await page.evaluate(() => window.launcher.saveSettings({ serverHost:'', serverPort:25565 }));
+    }
+
     // A real isolated popup, with only its network navigation replaced by a
     // stalled fixture. Never visit or inject scripts into an account page.
     await electron.evaluate(({ BrowserWindow, shell, clipboard }) => {
@@ -230,6 +300,7 @@ async function main() {
       check(popupSecurity.blocked, 'login popup rejects navigation to an unrelated site');
       check(await page.getByRole('button', { name: '로그인 주소 복사', exact: true }).evaluate(element => element.getBoundingClientRect().bottom < document.querySelector('.launch-dock').getBoundingClientRect().top), 'browser fallback remains visible above the dock at minimum window size');
       check(await page.getByRole('button', { name: '로그인 진행 중', exact: true }).isDisabled(), 'pending login is identified as login, not game preparation');
+      check(!/0 MB|0%/.test(await page.locator('.operation-top').innerText()) && await page.getByRole('progressbar').getAttribute('aria-valuenow') === null, 'interactive login shows indeterminate authentication status without fake download bytes or percentage');
       await capture('login-browser-fallback');
       await menu.getByRole('button', { name: '설정', exact: true }).click();
       check(await page.getByRole('button', { name: '설정 저장', exact: true }).locator('.spin').count() === 0, 'unrelated settings save button does not spin during login');
@@ -293,6 +364,19 @@ async function main() {
       await page.waitForFunction(async () => (await window.launcher.getState()).auth.status === 'signed-in');
       check(callbackStatus === 200 && await electron.evaluate(() => globalThis.__cobblePopupClosedAtExchange), 'verified callback automatically closes popup before token exchange without cancelling authentication');
       check((await page.evaluate(() => window.launcher.getState())).profile.name === 'PopupFixture', 'popup flow completes ownership and profile validation using explicit test fixtures');
+      await electron.evaluate(() => { globalThis.__cobbleSuccessfulAuthFetch = globalThis.fetch; globalThis.fetch = async () => new Response('', { status:503 }); });
+      const transientFailure = await reject('install');
+      const retained = await page.evaluate(() => window.launcher.getState());
+      check(transientFailure.rejected && retained.profile?.name === 'PopupFixture' && retained.auth.code === 'NETWORK', 'temporary authentication outage preserves the verified account for retry');
+      await electron.evaluate(() => { globalThis.fetch = async () => new Response(JSON.stringify({ error:'invalid_grant', error_description:'ui-refresh-fixture' }), { status:400 }); });
+      const expiredSession = await reject('install');
+      const expiredState = await page.evaluate(() => window.launcher.getState());
+      check(expiredSession.rejected && expiredState.profile === null && expiredState.auth.code === 'SESSION_EXPIRED' && !expiredState.operation, 'revoked refresh credentials clear stale login and release the operation');
+      check(!await fs.stat(path.join(userData, 'credentials', 'session.encrypted')).then(() => true, () => false), 'expired session is removed from the encrypted vault');
+      await page.getByRole('heading', { name:'Microsoft 계정으로 다시 로그인해 주세요', exact:true }).waitFor();
+      check(await page.getByRole('button', { name:'로그인하고 시작하기', exact:true }).isEnabled(), 'expired session offers interactive login instead of repeating failed installs');
+      await capture('login-session-expired');
+      await electron.evaluate(() => { globalThis.fetch = globalThis.__cobbleSuccessfulAuthFetch; });
       await page.evaluate(() => window.launcher.logout());
 
       // A server may reject authentication with an empty body. The real IPC/UI
@@ -316,6 +400,21 @@ async function main() {
       check(deniedAuth.auth.message.includes('Xbox 계정 인증, HTTP 401') && !deniedAuth.profile && !await page.getByRole('button', { name:'Microsoft 계정 로그인', exact:true }).isDisabled(), 'empty Xbox HTTP rejection shows its real stage and allows retry without creating a profile');
       check(deniedAuth.logs.some(entry => entry.message === '인증 응답: Xbox 계정 인증 · HTTP 401 · empty') && !/ui-ms-fixture|ui-refresh-fixture|ui-code-fixture|ui-xbox-fixture|ui-minecraft-fixture/.test(JSON.stringify(deniedAuth)), 'authentication diagnostics identify HTTP failures without codes or tokens in renderer state');
       await capture('login-http-denial');
+      await electron.evaluate(() => {
+        globalThis.fetch = (url, init) => url.endsWith('/login_with_xbox') ? Promise.resolve(new Response('{}', { status:403 })) : globalThis.__cobbleSuccessfulAuthFetch(url, init);
+      });
+      await page.getByRole('button', { name:'Microsoft 계정 로그인', exact:true }).click();
+      await page.getByRole('button', { name:'로그인 취소', exact:true }).waitFor();
+      await electron.evaluate(async () => {
+        const authorization = new URL(globalThis.__cobblePopupUrl);
+        const callback = new URL(authorization.searchParams.get('redirect_uri'));
+        callback.hostname = '127.0.0.1';
+        callback.search = new URLSearchParams({ code:'ui-code-fixture', state:authorization.searchParams.get('state') });
+        await globalThis.__cobbleOriginalAuthFetch(callback);
+      });
+      await page.getByRole('heading', { name:'앱 사용 승인과 계정 권한을 확인해 주세요', exact:true }).waitFor();
+      check((await page.evaluate(() => window.launcher.getState())).auth.code === 'APP_APPROVAL' && await page.getByRole('button', { name:'운영자용 승인 안내', exact:true }).isVisible(), 'Minecraft 403 shows actionable operator approval guidance without claiming approval status');
+      await capture('login-approval-help');
     } finally {
       await page.evaluate(() => window.launcher.cancelOperation());
       await page.waitForFunction(async () => !(await window.launcher.getState()).operation);

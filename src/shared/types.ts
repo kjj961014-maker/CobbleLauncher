@@ -11,11 +11,13 @@ export interface Settings {
   packArchivePath: string;
 }
 export interface Profile { id: string; name: string; skinUrl?: string }
+export type AuthErrorCode = 'CONFIGURATION' | 'CANCELLED' | 'TIMEOUT' | 'BROWSER' | 'OAUTH' | 'APP_APPROVAL' |
+  'XBOX_PROFILE' | 'XBOX_FAMILY' | 'OWNERSHIP' | 'NETWORK' | 'RESPONSE' | 'SESSION_EXPIRED';
 export interface LauncherState {
   pack: { id: string; name: string; version: string; minecraftVersion: string; loader: string };
   settings: Settings;
   profile: Profile | null;
-  auth: { status: 'signed-out'|'signing-in'|'signed-in'|'error'; message?: string };
+  auth: { status: 'signed-out'|'signing-in'|'signed-in'|'error'; message?: string; code?: AuthErrorCode };
   installation: { status: 'not-installed'|'installing'|'installed'|'error'; version?: string; message?: string };
   operation: null | { kind: string; stage: string; progress: number; downloadedBytes: number; totalBytes: number; speedBytesPerSecond: number; message: string };
   game: { running: boolean; pid?: number };

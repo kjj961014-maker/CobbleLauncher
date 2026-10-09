@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { launch as launchGame, Version } from '@xmcl/core';
 import { z } from 'zod';
 import type { LauncherState, Settings } from '../shared/types';
-import { authenticate, refresh, type Session, type AuthDiagnostic } from './auth';
+import { authenticate, refresh, AuthError, type Session, type AuthDiagnostic } from './auth';
 import { openLoginWindow, type LoginWindow } from './login-window';
 import { installMinecraft } from './minecraft';
 import { installModpack, ensurePackArchive, recoverModpack, type PackCatalog } from './modpack';
@@ -18,6 +18,7 @@ import { pingServer } from './server';
 
 let window:BrowserWindow|null=null, state:LauncherState, vault:Vault, pack:PackCatalog, session:Session|null=null;
 let operation:AbortController|null=null;
+let settingsSaving=false;
 let settingsFile:string,logsDirectory:string,rootDirectory:string;
 let lastPublish=0,feed:Feed|null=null,sessionClientId='';
 let configurationRevision=0;
@@ -49,6 +50,7 @@ async function syncInstallation() {
   state.installation=marker?{status:'installed',version:current.version??marker.packVersion}:{status:'not-installed'};
 }
 async function runOperation(kind:string,fn:(signal:AbortSignal)=>Promise<unknown>) {
+  if(settingsSaving)throw new Error('설정을 저장하고 있습니다. 잠시 후 다시 시도하세요.');
   if(operation)throw new Error('다른 작업이 진행 중입니다. 완료하거나 취소한 뒤 다시 시도하세요.');
   if(state.game.running)throw new Error('게임이 실행 중입니다. 종료한 뒤 파일 작업을 진행하세요.');
   const controller=new AbortController();operation=controller;state.error=undefined;
@@ -142,10 +144,19 @@ async function launch() {
 async function refreshSession(signal:AbortSignal):Promise<void> {
   if(!session||sessionClientId!==state.settings.microsoftClientId)throw new Error('Microsoft 정품 계정으로 로그인하세요.');
   const identity=session;const clientId=state.settings.microsoftClientId;
-  const next=await refresh(clientId,identity.refreshToken,{signal,onDiagnostic:authDiagnostic});
-  if(session!==identity||clientId!==state.settings.microsoftClientId)throw new Error('계정이 변경되었습니다. 다시 로그인하세요.');
-  session=next;sessionClientId=clientId;state.profile=next.profile;state.auth={status:'signed-in'};
-  await vault.set('session',{session:next,clientId});publish(true);
+  try {
+    const next=await refresh(clientId,identity.refreshToken,{signal,onDiagnostic:authDiagnostic});
+    if(session!==identity||clientId!==state.settings.microsoftClientId)throw new Error('계정이 변경되었습니다. 다시 로그인하세요.');
+    await vault.set('session',{session:next,clientId});
+    session=next;sessionClientId=clientId;state.profile=next.profile;state.auth={status:'signed-in'};publish(true);
+  } catch(error) {
+    if(error instanceof AuthError && error.code==='SESSION_EXPIRED') {
+      session=null;sessionClientId='';state.profile=null;
+      await vault.delete('session');
+    }
+    state.auth={status:'error',code:error instanceof AuthError?error.code:undefined,message:redact(error instanceof Error?error.message:String(error))};
+    publish(true);throw error;
+  }
 }
 function authDiagnostic(result:AuthDiagnostic) {
   log('info',`인증 응답: ${result.stage} · HTTP ${result.status} · ${result.format}`);
@@ -182,7 +193,7 @@ async function initialize() {
     let loginWindow:LoginWindow|undefined;
     let loginProblem:string|undefined;
     try{
-      session=await authenticate(state.settings.microsoftClientId,{
+      const authenticated=await authenticate(state.settings.microsoftClientId,{
         openExternal:url=>{
           loginWindow=openLoginWindow(url,{
             parent:window!,show:!isUITest,
@@ -199,25 +210,45 @@ async function initialize() {
           progress(stage==='verifying'?'계정 확인':'Microsoft 로그인',message,0);publish(true);
         }
       });
-      sessionClientId=state.settings.microsoftClientId;await vault.set('session',{session,clientId:sessionClientId});state.profile=session.profile;state.auth={status:'signed-in'};log('info',`${session.profile.name} 정품 프로필 확인 완료`);
-    }catch(error){state.auth={status:'error',message:redact(error instanceof Error?error.message:String(error))};throw error;}
+      await vault.set('session',{session:authenticated,clientId:state.settings.microsoftClientId});session=authenticated;sessionClientId=state.settings.microsoftClientId;state.profile=session.profile;state.auth={status:'signed-in'};log('info',`${session.profile.name} 정품 프로필 확인 완료`);
+    }catch(error){state.auth={status:'error',code:error instanceof AuthError?error.code:undefined,message:redact(error instanceof Error?error.message:String(error))};throw error;}
     finally{pendingLoginUrl=null;loginWindow?.close();}
   }));
   handle('copyLoginLink',()=>{
     if(!pendingLoginUrl||state.operation?.kind!=='login')throw new Error('진행 중인 Microsoft 로그인이 없습니다. 다시 로그인을 시작하세요.');
     clipboard.writeText(pendingLoginUrl);
   });
-  handle('logout',async()=>{if(operation||state.game.running)throw new Error('게임과 진행 중인 작업을 종료한 뒤 계정을 전환하세요.');session=null;sessionClientId='';state.profile=null;state.auth={status:'signed-out'};await vault.delete('session');publish(true);});
+  handle('logout',async()=>{if(operation||settingsSaving||state.game.running)throw new Error('게임과 진행 중인 작업을 종료한 뒤 계정을 전환하세요.');await vault.delete('session');session=null;sessionClientId='';state.profile=null;state.auth={status:'signed-out'};publish(true);});
   handle('cancelOperation',()=>{operation?.abort();});
   handle('saveSettings',async value=>{
-    if(operation||state.game.running)throw new Error('게임과 파일 작업을 종료한 뒤 설정을 변경하세요.');
+    if(operation||settingsSaving||state.game.running)throw new Error('게임과 진행 중인 작업을 종료한 뒤 설정을 변경하세요.');
+    settingsSaving=true;
+    try {
     const changes=settingsSchema.parse(value);const {curseforgeApiKey,...preferences}=changes;
     if(preferences.gameDirectory){if(!path.isAbsolute(preferences.gameDirectory)||path.parse(preferences.gameDirectory).root===path.resolve(preferences.gameDirectory))throw new Error('게임 전용 하위 폴더를 선택하세요.');await assertNoLinks(preferences.gameDirectory,preferences.gameDirectory);}
     if(preferences.memoryMb&&preferences.memoryMb>state.system.totalMemoryMb-1024)throw new Error('운영체제에 최소 1 GB 메모리를 남겨 주세요.');
     if(deployment.updatePublicKey && (preferences.updatePublicKey!==undefined||preferences.updateUrl!==undefined)){if(preferences.updatePublicKey!==undefined&&preferences.updatePublicKey!==deployment.updatePublicKey)throw new Error('운영자가 고정한 업데이트 서명 키는 변경할 수 없습니다.');if(preferences.updateUrl!==undefined&&preferences.updateUrl!==deployment.updateUrl)throw new Error('운영자가 고정한 업데이트 채널은 변경할 수 없습니다.');}
-    if(curseforgeApiKey!==undefined){if(curseforgeApiKey.trim())await vault.set('curseforge',curseforgeApiKey.trim());else await vault.delete('curseforge');}
-    if(preferences.microsoftClientId!==undefined&&preferences.microsoftClientId!==state.settings.microsoftClientId){session=null;state.profile=null;state.auth={status:'signed-out'};await vault.delete('session');}
-    state.settings={...state.settings,...preferences,curseforgeApiKeyConfigured:!!await vault.get('curseforge')};configurationRevision++;await writeJsonAtomic(settingsFile,state.settings);await syncInstallation();feed=null;publish(true);refreshServer();
+    const clientChanged=preferences.microsoftClientId!==undefined&&preferences.microsoftClientId!==state.settings.microsoftClientId;
+    const previousKey=curseforgeApiKey!==undefined?await vault.get<string>('curseforge'):undefined;
+    const previousSession=clientChanged?await vault.get('session'):undefined;
+    const nextSettings={...state.settings,...preferences,curseforgeApiKeyConfigured:curseforgeApiKey!==undefined?!!curseforgeApiKey.trim():state.settings.curseforgeApiKeyConfigured};
+    // Commit preferences before changing secrets or the live account. An IO
+    // failure must not silently switch accounts or replace a working API key.
+    await writeJsonAtomic(settingsFile,nextSettings);
+    try {
+      if(curseforgeApiKey!==undefined){if(curseforgeApiKey.trim())await vault.set('curseforge',curseforgeApiKey.trim());else await vault.delete('curseforge');}
+      if(clientChanged)await vault.delete('session');
+    } catch(error) {
+      try {
+        if(curseforgeApiKey!==undefined){if(previousKey!==null)await vault.set('curseforge',previousKey);else await vault.delete('curseforge');}
+        if(clientChanged){if(previousSession!==null)await vault.set('session',previousSession);else await vault.delete('session');}
+        await writeJsonAtomic(settingsFile,state.settings);
+      } catch { log('error','설정 저장 복구에 실패했습니다. 파일 및 진단에서 저장 공간과 접근 권한을 확인하세요.'); }
+      throw error;
+    }
+    if(clientChanged){session=null;sessionClientId='';state.profile=null;state.auth={status:'signed-out'};}
+    state.settings=nextSettings;configurationRevision++;await syncInstallation();feed=null;publish(true);void refreshServer();
+    } finally { settingsSaving=false; }
   });
   handle('chooseDirectory',async()=>{const result=await dialog.showOpenDialog(window!,{title:'게임 전용 설치 폴더 선택',properties:['openDirectory','createDirectory']});return result.canceled?null:result.filePaths[0];});
   handle('choosePackArchive',async()=>{const result=await dialog.showOpenDialog(window!,{title:'공식 Immersive Cobblemon 6.2.0 ZIP 선택',properties:['openFile'],filters:[{name:'CurseForge 모드팩',extensions:['zip']}]});return result.canceled?null:result.filePaths[0];});
@@ -238,7 +269,16 @@ async function initialize() {
   if(isSmoke){setTimeout(async()=>{try{const ui=await window!.webContents.executeJavaScript("({title:document.title,text:document.body.innerText,hasBridge:!!window.launcher,width:window.innerWidth,height:window.innerHeight})");const screenshot=await window!.webContents.capturePage();await fs.mkdir(qaOutput,{recursive:true});await fs.writeFile(path.join(qaOutput,'launcher.png'),screenshot.toPNG());await writeJsonAtomic(path.join(qaOutput,'smoke.json'),{ui,state,errors:state.logs.filter(l=>['error','renderer'].includes(l.level))});app.quit();}catch(error){console.error(error);app.exit(1);}},1500);}
   else if(!isUITest) {refreshServer();checkUpdates(false).catch(error=>log('warn',String(error)));setInterval(()=>{refreshServer();if(!operation)checkUpdates(!state.game.running).catch(error=>log('warn',String(error)));},90000).unref();}
 }
-async function refreshServer(){if(!state)return;state.server=state.settings.serverHost?{status:'checking'}:{status:'unconfigured'};publish();state.server=await pingServer(state.settings.serverHost,state.settings.serverPort);publish(true);}
+let serverCheck=0;
+async function refreshServer(){
+  if(!state)return;
+  const check=++serverCheck,revision=configurationRevision;
+  const {serverHost,serverPort}=state.settings;
+  state.server=serverHost?{status:'checking'}:{status:'unconfigured'};publish();
+  const result=await pingServer(serverHost,serverPort);
+  if(check!==serverCheck||revision!==configurationRevision)return;
+  state.server=result;publish(true);
+}
 if(!app.requestSingleInstanceLock())app.quit();else {
   app.on('second-instance',()=>{window?.show();window?.focus();});
   app.whenReady().then(initialize).catch(error=>{console.error(error);dialog.showErrorBox('런처 시작 실패',String(error));app.exit(1);});

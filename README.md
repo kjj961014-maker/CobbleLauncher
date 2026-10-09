@@ -2,11 +2,11 @@
 
 An independent, non-commercial Windows Minecraft launcher being developed for a private group of **up to 10 friends**. The initial target is Immersive Cobblemon 6.2.0 for Minecraft Java Edition 1.21.1 with NeoForge 21.1.252 and Java 21. The intended experience includes Microsoft account authentication, installation from permitted official sources, signed updates, server announcements, and a Korean-language interface.
 
-**Status: 0.1.4 development preview.** Live Microsoft login, the complete modpack download, full game launch, and server connection still need end-to-end verification. CurseForge API access and an approved integration for end-user downloads are being arranged. No CurseForge approval is claimed, and developer API keys are not bundled or shared with players.
+**Status: 0.1.5 development preview.** Live Microsoft login, the complete modpack download, full game launch, and server connection still need end-to-end verification. CurseForge API access and an approved integration for end-user downloads are being arranged. No CurseForge approval is claimed, and developer API keys are not bundled or shared with players.
 
 The static project introduction is in [`docs/index.html`](docs/index.html). It can be hosted on GitHub Pages from the `main` branch's `/docs` folder after the repository is published.
 
-한국어 Windows 64비트 Minecraft 런처의 **0.1.4 개발 빌드**입니다. 제공된 Immersive Cobblemon 6.2.0 ZIP을 분석하여 Minecraft 1.21.1, NeoForge 21.1.252, Java 21을 설치 대상으로 확정했습니다.
+한국어 Windows 64비트 Minecraft 런처의 **0.1.5 개발 빌드**입니다. 제공된 Immersive Cobblemon 6.2.0 ZIP을 분석하여 Minecraft 1.21.1, NeoForge 21.1.252, Java 21을 설치 대상으로 확정했습니다.
 
 실제 Electron 앱과 NSIS 설치형 EXE를 생성합니다. Microsoft 정품 인증·파일 설치·서명된 증분 패치 코드를 구현했으며, 실제 계정 로그인과 모드팩 전체 게임 구동은 외부 서비스 등록 후 추가 검증이 필요합니다. 검증 범위는 [검증 기록](docs/verification.md)에 구분되어 있습니다.
 
@@ -21,7 +21,7 @@ npm run test:ui
 npm run dist
 ```
 
-`npm run dist`는 `release/CobbleLauncher-Setup-0.1.4.exe`를 만듭니다. Node.js는 개발·빌드 PC에만 필요하며, 설치형 런처는 Electron과 함께 실행됩니다. 게임용 Java 21은 Mojang의 공식 런타임에서 별도로 설치합니다. UI 검사는 Playwright 개발 패키지 또는 Codex 번들 Playwright 경로가 필요합니다.
+`npm run dist`는 `release/CobbleLauncher-Setup-0.1.5.exe`를 만듭니다. Node.js는 개발·빌드 PC에만 필요하며, 설치형 런처는 Electron과 함께 실행됩니다. 게임용 Java 21은 Mojang의 공식 런타임에서 별도로 설치합니다. UI 검사는 Playwright 개발 패키지 또는 Codex 번들 Playwright 경로가 필요합니다.
 
 ## 이용자 및 운영자 안내
 

@@ -1,6 +1,6 @@
 # 개발 검증 기록
 
-검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.4 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
+검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.5 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다. 운영자는 CurseForge와 Minecraft Services 앱 승인 신청을 제출했으며 회신을 기다리고 있습니다.
 
 ## 실제 파일·프로세스로 확인한 항목
 
@@ -14,8 +14,8 @@
 | NeoForge | 공식 21.1.252 installer와 실제 Java processor 실행 완료. core로 설치된 버전 JSON과 라이브러리 해석 성공 |
 | 재설치/캐시 | 같은 테스트 instance에 설치를 다시 실행해 정상 파일을 재사용하고 강화한 경로·호스트 검증 통과 |
 | Electron | TypeScript·Vite production 빌드, Electron 창·preload IPC 실제 실행 및 화면 캡처 통과 |
-| UI 조작 | 실제 Electron 격리 프로필에서 첫 안내·설정 저장·5개 메뉴·최소1000×700 배치·오류 없는 렌더링·Windows safeStorage 암호화·평문 키 비노출·인증 없는 설치 차단·로그인 팝업 격리·취소·자동 닫기 등 47개 검사 통과. 최신 세부 기록은 test-results/ui-electron/report.json |
-| 패키징 | Windows x64 NSIS 설치형 EXE 생성. 개발 PC의 격리 설치 폴더에 실제 NSIS 설치(종료0)→설치된 EXE와 IPC smoke 검사→테스트 설치 제거(종료0) 통과. win-unpacked 패키지 실행도 통과. 최종 바이너리 해시는 test-results/release-verification.json |
+| UI 조작 | 실제 Electron 격리 프로필에서 첫 안내·설정 저장·5개 메뉴·최소1000×700 배치·오류 없는 렌더링·Windows safeStorage 암호화·평문 키 비노출·인증 없는 설치 차단·로그인 팝업 격리·취소·자동 닫기·설정 실패 복구·세션 만료 등 59개 검사 통과. 최신 세부 기록은 test-results/ui-electron/report.json |
+| 패키징 | 0.1.5 Windows x64 NSIS 설치형 EXE 생성 및 win-unpacked 패키지 격리 실행·IPC 검사 통과. build/dist 전체와 ASAR 내 파일의 해시 일치 확인. 0.1.5 NSIS 설치/제거는 아직 실행하지 않았으며 이전 버전의 설치 검증과 구분합니다. 최종 바이너리 해시는 test-results/release-verification.json |
 | 운영 CLI | 테스트용 개인키 생성·공지 초안 서명·서명 재검증 실행 통과. 테스트 개인키는 private 아래로 배포에서 제외 |
 | 라이선스 | production 의존성 고지 생성. 게임/모드/팩 ZIP/overrides/셰이더/MCP 자료/테스트 자격증명은 EXE에 포함하지 않음 |
 
@@ -23,7 +23,7 @@
 
 ## 통제된 응답과 실제 임시 파일로 검증한 항목
 
-`npm test`는 현재 67개 테스트가 통과했습니다. 새 변경 후의 정확한 합계는 실행 결과를 기준으로 합니다.
+`npm test`는 현재 73개 테스트가 통과했습니다. 새 변경 후의 정확한 합계는 실행 결과를 기준으로 합니다.
 
 - 공식 OAuth PKCE/state·callback 위조·취소·시간 초과·토큰 갱신·Xbox 사용자 불일치·가족 제한·Java 소유권 거부: 실제 loopback 서버와 통제된 인증 응답 사용. 실제 Microsoft 로그인을 대체한 완료 판정이 아닙니다.
 - HTTPS redirect·호스트 제한·자격증명 헤더 제거·Range 206/200/416·스트림 중단·완성 캐시·해시 오류·빈 파일 패치: 통제된 HTTP 응답과 실제 파일 쓰기 사용.
@@ -85,6 +85,20 @@ OS 브라우저 실행 Promise가 끝나지 않아도 정상 callback·취소·5
 
 Xbox의 relying party가 토큰 수신 서비스를 구분하는 식별자라는 점은 [Microsoft XSTS 설명](https://learn.microsoft.com/en-gb/gaming/gdk/docs/services/fundamentals/s2s-auth-calls/s2s-calls/live-title-service-calls-xbox-live)을 확인했고, Minecraft용 정확한 값은 [Prism Launcher의 인증 흐름 소스](https://github.com/PrismLauncher/PrismLauncher/blob/develop/launcher/minecraft/auth/AuthFlow.cpp)와 [prismarine-auth의 RelyingParty 정의](https://github.com/PrismarineJS/prismarine-auth/blob/master/index.d.ts)를 대조했습니다.
 
-기존 테스트의 XSTS 가상 서버는 요청 대상값을 확인하지 않고 성공 응답을 반환하여 이 오류를 잡지 못했습니다. 기본 인증 테스트와 실제 Electron UI 테스트의 가상 서버 모두 잘못된 대상값·샌드박스·토큰 종류·사용자 토큰을 HTTP 400으로 거절하도록 보강했습니다. 현재 기본 검사 67개가 통과했고, 별도의 private 복사본에 예전 오타를 복원했을 때 같은 테스트가 XSTS HTTP 400으로 실패하는 것도 확인했습니다(`test-results/xsts-regression-proof.json`). 실제 사용자 계정의 XSTS 및 이후 Minecraft 인증 성공은 수정 버전에서 재시도하여 확인해야 합니다.
+기존 테스트의 XSTS 가상 서버는 요청 대상값을 확인하지 않고 성공 응답을 반환하여 이 오류를 잡지 못했습니다. 기본 인증 테스트와 실제 Electron UI 테스트의 가상 서버 모두 잘못된 대상값·샌드박스·토큰 종류·사용자 토큰을 HTTP 400으로 거절하도록 보강했습니다. 현재 기본 검사 67개가 통과했고, 별도의 private 복사본에 예전 오타를 복원했을 때 같은 테스트가 XSTS HTTP 400으로 실패하는 것도 확인했습니다(`test-results/xsts-regression-proof.json`).
+
+0.1.4 설치 후 실제 사용자 재시도(2026-10-09 20:17 KST)에서 Microsoft 토큰 교환·Xbox 계정 인증·XSTS 게임 권한 확인이 모두 HTTP 200으로 통과했습니다. XSTS 결함의 실제 해결을 확인했으며, 다음 Minecraft 로그인 단계에서는 HTTP 403(JSON)이 반환되었습니다. 운영자는 Minecraft Services 앱 사용 승인 신청을 아직 하지 않았다고 확인했습니다. 다음 단계는 기존 앱 ID의 승인 신청과 회신 확인입니다. HTTP 403만으로 다른 원인을 배제할 수 없으며, Minecraft 토큰 발급·소유권·프로필·세션 유지와 실제 게임 실행은 아직 검증하지 못했습니다.
 
 보강된 실제 Electron UI 검사 47개가 통과했습니다. 사용자 설치를 0.1.4로 업데이트한 NSIS 종료 코드는 0이며 설정 파일의 설치 전후 해시가 일치합니다. 설치된 0.1.4 EXE의 격리 smoke 실행과 ASAR/auth·main·popup 파일 일치 검사도 통과했습니다. 설치 파일 SHA-256: `4dc3d4e8bf1f99057517043dbfff1fc91125fd73e899cd2d66b13cd1842f2aa5`.
+
+## 0.1.5 설정 보존과 오류 복구
+
+설정 화면에서 저장 전에 메뉴를 이동해도 입력한 내용을 현재 실행 동안 보존합니다. 다른 화면에는 작성 중인 설정으로 돌아가는 안내를 표시하고, 변경 취소는 저장된 값으로 복원하며 입력 중인 비밀 키도 지웁니다. 앱 종료 시 미저장 내용은 사라집니다. 로그인 작업은 다운로드 용량과 가짜 0% 대신 현재 인증 단계를 표시합니다.
+
+인증 오류 분류를 화면에 전달하여 앱 승인, 연결 설정, 세션 만료, 일시적 네트워크 오류마다 다음 행동을 안내합니다. Minecraft HTTP 403은 앱 승인 또는 계정 권한 확인으로 안내하며 승인 여부를 확정하지 않습니다. Microsoft refresh token이 invalid_grant로 거절되면 저장된 세션과 프로필을 해제하고 재로그인을 요청합니다. 일시적인 HTTP 503에서는 기존 연결을 유지합니다.
+
+설정 저장과 게임 작업의 중복 실행을 막고, 설정 파일 또는 암호화된 키 저장에 실패하면 이전 상태를 복원합니다. 실패한 임시 키 파일도 정리합니다. 서버 상태 요청에는 DNS 조회부터 응답 완료까지 4초 제한을 적용하고, 연결 종료·부분 응답·잘못된 패킷을 처리합니다. 이전 서버 주소의 늦은 응답이 새 주소의 상태를 덮어쓰지 않게 했습니다.
+
+기본 테스트 73개와 실제 Electron UI 검사 59개가 통과했습니다. 여기에는 실제 TCP 서버의 분할 응답·무응답 종료·느린 응답 제한과, 통제된 디스크 쓰기 실패 및 인증 응답을 이용한 복구 검증이 포함됩니다. `test-results/packaged-final/smoke.json`에서 실제 패키지 EXE의 0.1.5 버전·화면·IPC·오류 없음을 확인했고, ASAR 안의 build/dist 전체가 검증된 로컬 빌드와 일치합니다. 이번 버전의 NSIS 설치와 실제 사용자 계정 로그인은 아직 실행하지 않았습니다. 기존 사용자 설치는 0.1.4입니다.
+
+설치 파일은 `CobbleLauncher-Setup-0.1.5.exe`, 115,724,423바이트, SHA-256 `efbeed398b386291be1bb7d5720a4b9db2ab96bad15400a541539c50d2ec7303`입니다. Minecraft Services/CurseForge 승인 이후 실제 로그인·전체 모드팩 다운로드·게임과 서버 접속 검증이 남아 있습니다. 추가 제공된 MushiroMega JAR은 정적 분석만 했으며 설치 파일이나 원본 팩에는 포함하지 않았습니다.

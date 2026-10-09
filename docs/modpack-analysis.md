@@ -1,5 +1,16 @@
 # Immersive Cobblemon 실제 파일 분석
 
+## 추가 제공 파일 확인 — 2026-10-09
+
+`mushiromega-1.7.3-fixed.jar`(4,310,478바이트, SHA-256 `742db5e7f4813222dc3d1316d4c9383c7e4955e786ba691dca30263af86e9794`)를 ZIP 구조로 읽었습니다. 이 검사에서는 JAR을 실행하지 않았습니다.
+
+- `fabric.mod.json`은 Fabric Loader 0.17.3 이상, Minecraft ~1.21.1, Java 21 이상, Architectury 13.0.8 이상, Fabric API를 선언합니다.
+- Fabric용 진입점과 Fabric intermediary 매핑이 들어 있으며, NeoForge용 모드 메타데이터는 없습니다. 하지만 기존 팩에 Sinytra Connector와 Connector Extras가 있으므로 Fabric 전용이라는 이유만으로 적용 불가라고 판단할 수 없습니다. [Connector 제작자 설명](https://github.com/Sinytra/Connector)
+- 내부 버전은 `1.0-SNAPSHOT`으로 표시되어 파일명의 1.7.3만으로 Cobblemon 호환 버전을 판단할 수 없습니다. Java 클래스 6개의 상수 풀을 정적으로 읽었고, Mega Showdown의 `MegaStone`과 `MegaShowdownDataComponents` 클래스를 직접 참조함을 확인했습니다. 따라서 독립적인 메가진화 구현이 아닌 Mega Showdown용 추가 모드입니다. mixin 설정의 목록은 비어 있습니다.
+- 실제 팩 manifest의 ID를 공식 파일 페이지와 대조했습니다: [Connector 2.0.0 beta 17](https://www.curseforge.com/minecraft/mc-mods/sinytra-connector/files/8654089), [Forgified Fabric API 0.116.15+2.3.5](https://www.curseforge.com/minecraft/mc-mods/forgified-fabric-api/files/8726480), [Architectury 13.0.11 NeoForge](https://www.curseforge.com/minecraft/mc-mods/architectury-api/files/8492726), [Cobblemon 1.8.1 NeoForge](https://www.curseforge.com/minecraft/mc-mods/cobblemon/files/8868914), [Mega Showdown 1.2.0+1.8.1+1.21.1 NeoForge](https://www.curseforge.com/minecraft/mc-mods/cobblemon-mega-showdown/files/8870190), Connector Extras 913445/5618470. 선행 모드와 호환 계층이 이미 포함되어 있어 시험할 경로가 있습니다.
+- Connector 해당 태그의 [버전 설정](https://github.com/Sinytra/Connector/blob/2.0.0-beta.17%2B1.21.1/gradle/libs.versions.toml)은 Forgified Fabric Loader `2.5.70+0.19.3+1.21.1`을 지정합니다. 이는 연결 계층의 구성 확인이며, 모든 모드 API의 호환성이나 실제 초기화 순서를 보증하지 않습니다.
+- 사용자는 원본 배포처가 사라졌고 Google Drive 공유로 받은 파일이라고 설명했습니다. 원본 진위와 정확한 지원 버전은 확인되지 않았습니다. 현재 판정은 **Connector를 통한 적용 시험 가능, 실제 동작 미검증**입니다. 기존 모드의 데이터/리소스 중복과 API 버전 호환성, 클라이언트·서버 구동 및 메가진화 동작 검사가 필요합니다. catalog와 설치 파일에는 아직 추가하지 않았습니다.
+
 분석 기준일: 2026-10-09 (Asia/Seoul). 사용자가 제공한 ZIP을 실행하거나 전체 압축 해제하지 않고 중앙 디렉터리, `manifest.json`, `modlist.html`, 포함된 라이선스와 KubeJS 스크립트를 읽었다.
 
 ## 확정된 설치 대상

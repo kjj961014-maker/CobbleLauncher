@@ -15,8 +15,10 @@ export class Vault {
     if(!safeStorage.isEncryptionAvailable())throw new Error('Windows 자격 증명 암호화를 사용할 수 없습니다.');
     await fs.mkdir(this.directory,{recursive:true});
     const target=this.file(name),temporary=target+'.'+randomUUID()+'.tmp';
-    await fs.writeFile(temporary,safeStorage.encryptString(JSON.stringify(value)),{flag:'wx'});
-    await fs.rename(temporary,target);
+    try {
+      await fs.writeFile(temporary,safeStorage.encryptString(JSON.stringify(value)),{flag:'wx'});
+      await fs.rename(temporary,target);
+    } finally { await fs.rm(temporary,{force:true}).catch(()=>{}); }
   }
   async delete(name:'session'|'curseforge') { await fs.rm(this.file(name),{force:true}); }
 }

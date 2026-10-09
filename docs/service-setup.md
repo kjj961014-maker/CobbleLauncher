@@ -56,7 +56,11 @@ Entra에 앱을 등록하는 단계와 Minecraft Services에서 그 앱의 접�
 2. [Minecraft 앱 ID 검토 링크](https://aka.ms/mce-reviewappid)를 직접 엽니다. 런처와 앱의 실제 정보를 화면에 표시되는 안내에 따라 제출합니다. 앱의 Client ID, 테넌트 ID, 런처의 용도와 공개 설명을 확인할 수 있게 준비합니다.
 3. Microsoft의 승인 또는 추가 정보 요청을 확인한 뒤 같은 앱 ID로 다시 시험합니다. 다른 런처의 Client ID를 가져와 사용하지 않습니다.
 
-이 검토 링크는 조사 당시 Microsoft Forms로 이동했지만, 자동 읽기 도구에서는 양식 내용을 열지 못했습니다. 따라서 현재 양식의 정확한 항목, 개인 운영자의 승인 가능 여부, 처리 기간을 이 문서에서 확정하지 않습니다. 실제 양식과 Microsoft의 회신을 따릅니다. 이 링크를 안내하는 [HeliosLauncher의 인증 문서](https://github.com/dscalzi/HeliosLauncher/blob/master/docs/MicrosoftAuth.md)를 참고할 수 있으나, 현재 런처의 PKCE 방식에는 그 문서의 비밀 생성·내장 브라우저 설정을 적용하지 않습니다.
+2026-10-09 브라우저에서 실제 Microsoft Forms의 **AppID Review** 양식을 확인했습니다. 약관·사용 지침 확인, Azure에서 대조할 연락 이메일, 신청 유형, 앱 이름, Application (Client) ID, Directory (Tenant) ID, 소개 웹사이트, 신청 사유, 추가 정보의 9개 항목이 표시됩니다. 신규 승인은 **New AppID for Approval**을 선택하고, 기존 Azure 앱의 두 ID를 사용합니다. 새 Client ID를 만들거나 친구마다 신청할 필요가 없습니다.
+
+양식은 신규 앱 이름에 Mojang·Minecraft·Microsoft·Live·Xbox·Discord·Hypixel을 포함하지 말라고 안내합니다. `Cobble Launcher`는 해당 단어를 포함하지 않습니다. 또한 인증·라이선스 검사를 우회하거나 안전 기능을 해제하는 앱은 승인하지 않는다고 명시합니다. [EULA](https://www.minecraft.net/en-us/eula)와 [사용 지침](https://www.minecraft.net/en-us/usage-guidelines)을 확인한 후 운영자가 이해 여부를 직접 답합니다. 안내문에는 주 단위로 신청을 검토하며 중복 제출해도 처리가 빨라지지 않는다고 적혀 있습니다. 이는 특정 주 안의 승인이나 승인 가능성을 보장하지 않습니다.
+
+이 링크를 안내하는 [HeliosLauncher의 인증 문서](https://github.com/dscalzi/HeliosLauncher/blob/master/docs/MicrosoftAuth.md)도 참고할 수 있으나, 현재 런처의 PKCE 방식에는 그 문서의 비밀 생성·내장 브라우저 설정을 적용하지 않습니다.
 
 ## 5. CurseForge API 신청
 

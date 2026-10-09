@@ -1,7 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Profile } from '../shared/types';
+import type { Profile, AuthErrorCode } from '../shared/types';
+export type { AuthErrorCode } from '../shared/types';
 
 const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
 const SCOPE = 'XboxLive.signin offline_access';
@@ -15,9 +16,6 @@ export interface Session {
   refreshToken: string;
   expiresAt: number;
 }
-
-export type AuthErrorCode = 'CONFIGURATION' | 'CANCELLED' | 'TIMEOUT' | 'BROWSER' | 'OAUTH' | 'APP_APPROVAL' |
-  'XBOX_PROFILE' | 'XBOX_FAMILY' | 'OWNERSHIP' | 'NETWORK' | 'RESPONSE';
 
 export class AuthError extends Error {
   constructor(public readonly code: AuthErrorCode, message: string) {
@@ -70,6 +68,9 @@ function responseError(url: string, status: number, payload?: Record<string, unk
     const codes = Array.isArray(payload?.error_codes) ? payload.error_codes.filter((value): value is number =>
       typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 999999999).slice(0, 3) : [];
     const suffix = codes.length ? `, ${codes.map(code => `AADSTS${code}`).join(', ')}` : '';
+    if (payload?.error === 'invalid_grant') {
+      return new AuthError('SESSION_EXPIRED', `저장된 로그인 정보가 만료되거나 취소되었습니다 (${detail}${suffix}). Microsoft 계정으로 다시 로그인하세요.`);
+    }
     if (codes.includes(7000218) || payload?.error === 'unauthorized_client') {
       return new AuthError('CONFIGURATION', `Microsoft 앱 설정을 확인하세요 (${detail}${suffix}). 반환 주소를 모바일 및 데스크톱 애플리케이션에 등록해야 합니다.`);
     }

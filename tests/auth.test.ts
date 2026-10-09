@@ -76,6 +76,12 @@ test('PKCE login ignores a forged callback, uses the Minecraft XSTS audience and
   assert.equal(session.expiresAt, 86401000);
 });
 
+test('revoked refresh credentials are distinguished from a temporary server failure without exposing secrets', async () => {
+  await assert.rejects(refresh(clientId, 'private-refresh-token', {
+    fetch: (async () => new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'private-refresh-token' }), { status: 400 })) as typeof fetch,
+  }), (error: unknown) => error instanceof AuthError && error.code === 'SESSION_EXPIRED' && !error.message.includes('private-refresh-token'));
+});
+
 test('refresh retains the previous refresh token if no replacement is returned', async () => {
   const session = await refresh(clientId, 'previous-refresh', {
     fetch: authFetch({ refreshToken: '', tokenCheck(form) {
