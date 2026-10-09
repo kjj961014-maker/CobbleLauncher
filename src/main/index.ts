@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { promises as fs, appendFile } from 'node:fs';
@@ -20,6 +20,7 @@ let operation:AbortController|null=null;
 let settingsFile:string,logsDirectory:string,rootDirectory:string;
 let lastPublish=0,feed:Feed|null=null,sessionClientId='';
 let configurationRevision=0;
+let pendingLoginUrl:string|null=null;
 const isSmoke=process.argv.includes('--smoke-test');
 const isUITest=process.argv.includes('--ui-test');
 const qaOutput=process.env.COBBLE_QA_OUTPUT?path.resolve(process.env.COBBLE_QA_OUTPUT):path.resolve(__dirname,'../../test-results');
@@ -52,8 +53,8 @@ async function runOperation(kind:string,fn:(signal:AbortSignal)=>Promise<unknown
   const controller=new AbortController();operation=controller;state.error=undefined;
   state.operation={kind,stage:'준비',progress:0,downloadedBytes:0,totalBytes:0,speedBytesPerSecond:0,message:'작업 준비 중'};publish(true);
   try{return await fn(controller.signal);}
-  catch(error){const message=controller.signal.aborted?'작업을 취소했습니다. 다운로드된 정상 파일은 다음 시도에 재사용합니다.':redact(error instanceof Error?error.message:String(error));state.error=message;log('error',message);throw new Error(message);}
-  finally{try{await syncInstallation();}finally{operation=null;state.operation=null;publish(true);}}
+  catch(error){const message=controller.signal.aborted?(kind==='login'?'Microsoft 로그인을 취소했습니다.':'작업을 취소했습니다. 다운로드된 정상 파일은 다음 시도에 재사용합니다.'):redact(error instanceof Error?error.message:String(error));state.error=message;log('error',message);throw new Error(message);}
+  finally{try{if(kind!=='login')await syncInstallation();}finally{operation=null;state.operation=null;publish(true);}}
 }
 function progress(stage:string,message:string,amount:number,bytes?:{downloaded:number;total:number;speed:number}) {
   if(!state.operation)return;
@@ -172,7 +173,27 @@ async function initialize() {
   if(await recoverModpack(settings.gameDirectory))log('info','중단된 모드팩 설치를 안전하게 복구했습니다.');
   handle('getState',()=>structuredClone(state));handle('install',install);handle('launch',launch);handle('checkUpdates',()=>checkUpdates());
   handle('repair',async()=>{const current=await readJson<{version?:string;sequence?:number}>(path.join(state.settings.gameDirectory,'.cobble','update-installed.json'),{});if((current.sequence??0)>0){await runOperation('repair-runtime',async signal=>{await installMinecraft({gameDirectory:state.settings.gameDirectory,minecraftVersion:pack.minecraftVersion,loaderVersion:pack.loader.version,signal,onProgress:(stage,message,amount,bytes)=>progress(stage,message,amount*100,bytes)});});await checkUpdates(true,true);await runOperation('repair',async()=>{await validateInstalled();log('info','현재 서명된 패치 파일을 검사했습니다.');});}else await install();});
-  handle('login',()=>runOperation('login',async signal=>{state.auth={status:'signing-in'};publish(true);try{session=await authenticate(state.settings.microsoftClientId,{openExternal:url=>shell.openExternal(url),signal});sessionClientId=state.settings.microsoftClientId;await vault.set('session',{session,clientId:sessionClientId});state.profile=session.profile;state.auth={status:'signed-in'};log('info',`${session.profile.name} 정품 프로필 확인 완료`);}catch(error){state.auth={status:'error',message:String(error)};throw error;}}));
+  handle('login',()=>runOperation('login',async signal=>{
+    state.auth={status:'signing-in'};publish(true);
+    try{
+      session=await authenticate(state.settings.microsoftClientId,{
+        openExternal:url=>shell.openExternal(url),signal,
+        onAuthorizationUrl:url=>{pendingLoginUrl=url;},
+        onProgress:stage=>{
+          const message=stage==='opening'?'Microsoft 로그인 창을 열고 있습니다. 창이 없으면 로그인 주소를 복사해 주세요.':stage==='waiting'?'브라우저에서 Microsoft 로그인을 완료해 주세요.':'Minecraft 사용 권한과 프로필을 확인하고 있습니다.';
+          if(stage==='verifying')pendingLoginUrl=null;
+          state.auth={status:'signing-in',message};
+          progress(stage==='verifying'?'계정 확인':'Microsoft 로그인',message,0);publish(true);
+        }
+      });
+      sessionClientId=state.settings.microsoftClientId;await vault.set('session',{session,clientId:sessionClientId});state.profile=session.profile;state.auth={status:'signed-in'};log('info',`${session.profile.name} 정품 프로필 확인 완료`);
+    }catch(error){state.auth={status:'error',message:redact(error instanceof Error?error.message:String(error))};throw error;}
+    finally{pendingLoginUrl=null;}
+  }));
+  handle('copyLoginLink',()=>{
+    if(!pendingLoginUrl||state.operation?.kind!=='login')throw new Error('진행 중인 Microsoft 로그인이 없습니다. 다시 로그인을 시작하세요.');
+    clipboard.writeText(pendingLoginUrl);
+  });
   handle('logout',async()=>{if(operation||state.game.running)throw new Error('게임과 진행 중인 작업을 종료한 뒤 계정을 전환하세요.');session=null;sessionClientId='';state.profile=null;state.auth={status:'signed-out'};await vault.delete('session');publish(true);});
   handle('cancelOperation',()=>{operation?.abort();});
   handle('saveSettings',async value=>{

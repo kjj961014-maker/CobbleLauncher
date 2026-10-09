@@ -1,6 +1,6 @@
 {
   "name": "cobble-launcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "공식 인증과 안전한 설치를 위한 Cobble Launcher",
   "author": "Cobble Launcher contributors",
@@ -40,14 +40,42 @@
     "typescript": "7.0.2",
     "vite": "8.3.4"
   },
-  "overrides": { "@xmcl/unzip": { "@xmcl/yauzl": "2.10.0" } },
+  "overrides": {
+    "@xmcl/unzip": {
+      "@xmcl/yauzl": "2.10.0"
+    }
+  },
   "build": {
     "appId": "com.cobblelauncher.desktop",
     "productName": "Cobble Launcher",
-    "directories": { "output": "release" },
-    "files": ["build/**/*", "dist/**/*", "resources/pack.json", "resources/default-content.json", "resources/deployment.json", "THIRD-PARTY-NOTICES.txt", "LICENSE", "package.json"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "build/**/*",
+      "dist/**/*",
+      "resources/pack.json",
+      "resources/default-content.json",
+      "resources/deployment.json",
+      "THIRD-PARTY-NOTICES.txt",
+      "LICENSE",
+      "package.json"
+    ],
     "asar": true,
-    "win": { "target": ["nsis"], "icon": "resources/icon.png", "signExecutable": false },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "deleteAppDataOnUninstall": false, "artifactName": "CobbleLauncher-Setup-${version}.${ext}" }
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.png",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "CobbleLauncher-Setup-${version}.${ext}"
+    }
   }
 }

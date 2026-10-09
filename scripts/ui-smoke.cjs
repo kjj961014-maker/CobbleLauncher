@@ -187,6 +187,51 @@ async function main() {
     const afterDenials = await page.evaluate(() => window.launcher.getState());
     check(afterDenials.settings.updateUrl === '' && afterDenials.operation === null && !afterDenials.game.running && afterDenials.installation.status === 'not-installed', 'rejected IPC requests leave settings and installation unchanged');
     check(!JSON.stringify(afterDenials).includes(fixtureKey), 'state and rejection logs still exclude dummy credential');
+
+    // Exercise the reported failure through the actual renderer and IPC: the
+    // OS opener never settles, no Microsoft page opens, and cancel must work.
+    await electron.evaluate(({ shell, clipboard }) => {
+      globalThis.__cobbleOriginalOpener = shell.openExternal;
+      globalThis.__cobbleOriginalClipboardWrite = clipboard.writeText;
+      globalThis.__cobbleCopiedLogin = '';
+      shell.openExternal = () => new Promise(() => {});
+      clipboard.writeText = value => { globalThis.__cobbleCopiedLogin = value; };
+    });
+    try {
+      await page.evaluate(() => window.launcher.saveSettings({ microsoftClientId: '11111111-2222-4333-8444-555555555555' }));
+      await page.getByRole('button', { name: '알림 닫기', exact: true }).click().catch(() => {});
+      await page.getByRole('button', { name: '로그인하고 시작하기', exact: true }).click();
+      await page.getByRole('button', { name: '로그인 주소 복사', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: '로그인 주소 복사', exact: true }).evaluate(element => element.getBoundingClientRect().bottom < document.querySelector('.launch-dock').getBoundingClientRect().top), 'browser fallback remains visible above the dock at minimum window size');
+      check(await page.getByRole('button', { name: '로그인 진행 중', exact: true }).isDisabled(), 'pending login is identified as login, not game preparation');
+      await capture('login-browser-fallback');
+      await menu.getByRole('button', { name: '설정', exact: true }).click();
+      check(await page.getByRole('button', { name: '설정 저장', exact: true }).locator('.spin').count() === 0, 'unrelated settings save button does not spin during login');
+      await menu.getByRole('button', { name: '계정', exact: true }).click();
+      await page.getByRole('button', { name: '로그인 주소 복사', exact: true }).click();
+      check(await electron.evaluate(() => {
+        const url = new URL(globalThis.__cobbleCopiedLogin);
+        return url.origin === 'https://login.microsoftonline.com' && url.searchParams.get('client_id') === '11111111-2222-4333-8444-555555555555' && url.searchParams.get('code_challenge_method') === 'S256' && !url.searchParams.has('access_token');
+      }), 'manual fallback copies only the current official PKCE authorization link');
+      await page.getByRole('button', { name: '로그인 취소', exact: true }).click();
+      await page.waitForFunction(async () => !(await window.launcher.getState()).operation && !document.querySelector('.launch-button').disabled);
+      check((await page.evaluate(() => window.launcher.getState())).auth.status === 'error', 'cancellation releases pending browser login and enables retry');
+      const expiredCopy = await reject('copyLoginLink');
+      check(expiredCopy.rejected, 'finished login cannot copy an expired authorization link');
+      await page.getByRole('button', { name: 'Microsoft 계정 로그인', exact: true }).click();
+      await page.getByRole('button', { name: '로그인 취소', exact: true }).click();
+      await page.waitForFunction(async () => !(await window.launcher.getState()).operation && !document.querySelector('.launch-button').disabled);
+      check((await page.evaluate(() => window.launcher.getState())).operation === null, 'a second login can be cancelled after the first stalled opener');
+      await capture('login-cancelled');
+    } finally {
+      await page.evaluate(() => window.launcher.cancelOperation());
+      await electron.evaluate(({ shell, clipboard }) => {
+        shell.openExternal = globalThis.__cobbleOriginalOpener;
+        clipboard.writeText = globalThis.__cobbleOriginalClipboardWrite;
+        delete globalThis.__cobbleCopiedLogin;
+      });
+      await page.evaluate(() => window.launcher.saveSettings({ microsoftClientId: '' }));
+    }
     await page.evaluate(() => window.launcher.saveSettings({ curseforgeApiKey: '' }));
     fixtureStored = false;
     report.final = await page.evaluate(() => window.launcher.getState());

@@ -16,7 +16,7 @@ export interface Session {
   expiresAt: number;
 }
 
-export type AuthErrorCode = 'CONFIGURATION' | 'CANCELLED' | 'TIMEOUT' | 'OAUTH' | 'APP_APPROVAL' |
+export type AuthErrorCode = 'CONFIGURATION' | 'CANCELLED' | 'TIMEOUT' | 'BROWSER' | 'OAUTH' | 'APP_APPROVAL' |
   'XBOX_PROFILE' | 'XBOX_FAMILY' | 'OWNERSHIP' | 'NETWORK' | 'RESPONSE';
 
 export class AuthError extends Error {
@@ -35,6 +35,8 @@ export interface AuthOptions {
 export interface AuthenticateOptions extends AuthOptions {
   openExternal: (url: string) => Promise<void> | void;
   loginTimeoutMs?: number;
+  onAuthorizationUrl?: (url: string) => void;
+  onProgress?: (stage: 'opening' | 'waiting' | 'verifying') => void;
 }
 
 function configuredClient(clientId: string): string {
@@ -229,6 +231,7 @@ export async function authenticate(clientId: string, options: AuthenticateOption
   const cancel = () => rejectCode(new AuthError('CANCELLED', '로그인이 취소되었습니다.'));
   options.signal?.addEventListener('abort', cancel, { once: true });
   const timeout = setTimeout(() => rejectCode(new AuthError('TIMEOUT', '로그인 시간이 초과되었습니다. 다시 로그인하세요.')), options.loginTimeoutMs ?? 5 * 60 * 1000);
+  let browserProgressActive = true;
   try {
     checkCancelled(options.signal);
     const url = new URL(`${AUTHORITY}/authorize`);
@@ -236,8 +239,19 @@ export async function authenticate(clientId: string, options: AuthenticateOption
       client_id: clientId, response_type: 'code', redirect_uri: redirect, response_mode: 'query',
       scope: SCOPE, state, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account',
     }).toString();
-    await options.openExternal(url.href);
+    options.onAuthorizationUrl?.(url.href);
+    options.onProgress?.('opening');
+    const opening = Promise.resolve().then(() => options.openExternal(url.href)).then(() => {
+      if (browserProgressActive) options.onProgress?.('waiting');
+    }, () => {
+      throw new AuthError('BROWSER', 'Microsoft 로그인 창을 열지 못했습니다. Windows 기본 브라우저 설정을 확인한 뒤 다시 시도하세요.');
+    });
+    // OS browser activation may never settle. A callback, cancellation, or the
+    // login deadline must still release the listener and finish the operation.
+    await Promise.race([opening, codePromise.then(() => undefined)]);
+    browserProgressActive = false;
     const code = await codePromise;
+    options.onProgress?.('verifying');
     close(server);
     const oauth = await requestJson(`${AUTHORITY}/token`, {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -246,6 +260,7 @@ export async function authenticate(clientId: string, options: AuthenticateOption
     }, options);
     return await minecraftSession(oauth, undefined, options);
   } finally {
+    browserProgressActive = false;
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', cancel);
     close(server);

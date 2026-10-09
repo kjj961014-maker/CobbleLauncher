@@ -111,3 +111,54 @@ test('missing operator client ID is rejected before opening any browser', async 
     error => error instanceof AuthError && error.code === 'CONFIGURATION');
   assert.equal(opened, false);
 });
+
+test('a stalled browser opener cannot block cancellation or the login deadline', async () => {
+  const controller = new AbortController();
+  let callback: URL | undefined;
+  let finishOpening!: () => void;
+  const stages: string[] = [];
+  await assert.rejects(authenticate(clientId, {
+    signal: controller.signal,
+    onProgress: stage => stages.push(stage),
+    openExternal(url) {
+      callback = new URL(new URL(url).searchParams.get('redirect_uri')!);
+      queueMicrotask(() => controller.abort());
+      return new Promise<void>(resolve => { finishOpening = resolve; });
+    },
+  }), error => error instanceof AuthError && error.code === 'CANCELLED');
+  finishOpening();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(stages, ['opening']);
+  await assert.rejects(fetch(callback!));
+  await assert.rejects(authenticate(clientId, {
+    openExternal: () => new Promise<void>(() => {}), loginTimeoutMs: 5,
+  }), error => error instanceof AuthError && error.code === 'TIMEOUT');
+});
+
+test('a valid manual-browser callback completes login while OS activation is stalled', async () => {
+  let authorizationUrl = '';
+  let finishOpening!: () => void;
+  const stages: string[] = [];
+  const result = authenticate(clientId, {
+    fetch: authFetch(), loginTimeoutMs: 1000,
+    onAuthorizationUrl: url => { authorizationUrl = url; },
+    onProgress: stage => stages.push(stage),
+    openExternal() { return new Promise<void>(resolve => { finishOpening = resolve; }); },
+  });
+  while (!authorizationUrl) await new Promise(resolve => setImmediate(resolve));
+  const authorization = new URL(authorizationUrl);
+  const callback = new URL(authorization.searchParams.get('redirect_uri')!);
+  callback.searchParams.set('state', authorization.searchParams.get('state')!);
+  callback.searchParams.set('code', 'manual-browser-code');
+  assert.equal((await fetch(callback)).status, 200);
+  assert.equal((await result).profile.id, profileId);
+  finishOpening();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(stages, ['opening', 'verifying']);
+});
+
+test('browser launch errors do not expose OS details or the authorization URL', async () => {
+  await assert.rejects(authenticate(clientId, {
+    openExternal() { throw new Error('private OS detail with credentials'); },
+  }), error => error instanceof AuthError && error.code === 'BROWSER' && !error.message.includes('private OS detail'));
+});

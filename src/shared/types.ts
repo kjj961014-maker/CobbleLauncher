@@ -32,6 +32,7 @@ export interface LauncherAPI {
   getState(): Promise<LauncherState>;
   onState(listener: (state: LauncherState) => void): () => void;
   login(): Promise<unknown>; logout(): Promise<unknown>;
+  copyLoginLink(): Promise<unknown>;
   install(): Promise<unknown>; repair(): Promise<unknown>; launch(): Promise<unknown>;
   checkUpdates(): Promise<unknown>; cancelOperation(): Promise<unknown>;
   saveSettings(settings: Partial<Settings> & { curseforgeApiKey?: string }): Promise<unknown>;
