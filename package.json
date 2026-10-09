@@ -1,0 +1,53 @@
+{
+  "name": "cobble-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "공식 인증과 안전한 설치를 위한 Cobble Launcher",
+  "author": "Cobble Launcher contributors",
+  "license": "MIT",
+  "main": "build/main/index.js",
+  "scripts": {
+    "postinstall": "node scripts/fix-xmcl.cjs",
+    "dev": "npm run build && electron .",
+    "build": "node scripts/fix-xmcl.cjs && npm run typecheck && tsc -p tsconfig.main.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:ui": "node scripts/ui-smoke.cjs",
+    "start": "electron .",
+    "dist": "npm run build && node scripts/notices.cjs && electron-builder --win nsis --x64",
+    "dist:dir": "npm run build && node scripts/notices.cjs && electron-builder --win --dir --x64",
+    "smoke": "node scripts/smoke.cjs",
+    "admin": "tsx scripts/admin.ts"
+  },
+  "dependencies": {
+    "@xmcl/core": "2.16.2",
+    "@xmcl/installer": "6.3.5",
+    "adm-zip": "0.6.1",
+    "lucide-react": "1.54.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  },
+  "overrides": { "@xmcl/unzip": { "@xmcl/yauzl": "2.10.0" } },
+  "build": {
+    "appId": "com.cobblelauncher.desktop",
+    "productName": "Cobble Launcher",
+    "directories": { "output": "release" },
+    "files": ["build/**/*", "dist/**/*", "resources/pack.json", "resources/default-content.json", "resources/deployment.json", "THIRD-PARTY-NOTICES.txt", "LICENSE", "package.json"],
+    "asar": true,
+    "win": { "target": ["nsis"], "icon": "resources/icon.png", "signExecutable": false },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "deleteAppDataOnUninstall": false, "artifactName": "CobbleLauncher-Setup-${version}.${ext}" }
+  }
+}

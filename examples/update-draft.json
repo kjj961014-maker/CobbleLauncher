@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "packId": "immersive-cobblemon",
+  "version": "6.2.0-server.1",
+  "sequence": 1,
+  "minecraftVersion": "1.21.1",
+  "loaderVersion": "21.1.252",
+  "files": [],
+  "removedPaths": [],
+  "announcements": [{"id":"example-only","title":"배포 초안 예시","body":"운영자가 실제 공지로 수정한 뒤 서명합니다.","publishedAt":"2026-10-09"}],
+  "patchNotes": []
+}

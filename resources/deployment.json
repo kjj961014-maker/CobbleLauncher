@@ -1,0 +1,8 @@
+{
+  "microsoftClientId": "",
+  "updateUrl": "",
+  "updatePublicKey": "",
+  "serverHost": "",
+  "serverPort": 25565,
+  "memoryMb": 8192
+}

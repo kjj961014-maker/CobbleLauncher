@@ -1,0 +1,9 @@
+node_modules/
+build/
+dist/
+release/
+test-results/
+.env*
+*.log
+*.part
+private/

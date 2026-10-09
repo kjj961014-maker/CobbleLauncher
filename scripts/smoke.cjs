@@ -1,0 +1,13 @@
+const {spawn}=require('node:child_process');
+const path=require('node:path');
+const fs=require('node:fs');
+const executable=process.argv[2]||require('electron');
+const root=path.resolve(__dirname,'..');
+const output=path.resolve(process.argv[3]||path.join(root,'test-results'));
+const args=process.argv[2]?['--smoke-test']:['.','--smoke-test'];
+const env={...process.env,COBBLE_QA_OUTPUT:output};delete env.ELECTRON_RUN_AS_NODE;
+const child=spawn(executable,args,{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+let errors='';child.stdout.on('data',chunk=>process.stdout.write(chunk));child.stderr.on('data',chunk=>{errors+=chunk;process.stderr.write(chunk);});
+const timer=setTimeout(()=>{child.kill();console.error('Smoke test timed out');process.exitCode=1;},30000);
+child.on('error',error=>{clearTimeout(timer);console.error(error);process.exitCode=1;});
+child.on('close',code=>{clearTimeout(timer);if(code!==0){process.exitCode=1;return;}try{const result=JSON.parse(fs.readFileSync(path.join(output,'smoke.json'),'utf8'));if(!result.ui.hasBridge||!result.ui.text.includes('Immersive')||result.errors.length)throw new Error('Renderer or IPC bridge failed');console.log('Electron window and IPC smoke test passed.');}catch(error){console.error(error);process.exitCode=1;}});

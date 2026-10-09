@@ -1,0 +1,211 @@
+/* Runs the real Electron renderer and IPC bridge with an isolated --ui-test profile. */
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
+function loadPlaywright() {
+  try { return require('playwright'); }
+  catch {
+    const bundled = process.env.CODEX_PLAYWRIGHT_PATH || path.join(
+      process.env.USERPROFILE || '', '.cache', 'codex-runtimes', 'codex-primary-runtime',
+      'dependencies', 'node', 'node_modules', 'playwright',
+    );
+    try { return require(bundled); }
+    catch { throw new Error('UI smoke needs Playwright. Set CODEX_PLAYWRIGHT_PATH to its package directory or install the playwright dev dependency.'); }
+  }
+}
+
+async function main() {
+  const root = path.resolve(__dirname, '..');
+  const output = path.join(root, 'test-results', 'ui-electron');
+  await fs.mkdir(output, { recursive: true });
+  const { _electron } = loadPlaywright();
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const electron = await _electron.launch({
+    executablePath: require('electron'), args: [root, '--ui-test'], cwd: root, env,
+    timeout: 45000,
+  });
+  const report = { passed: [], errors: [], screenshots: [], initial: null, final: null, security: { expectedDenials: [], networkRequests: 0, encryptedCredentialBytes: 0 } };
+  let page;
+  let fixtureStored = false;
+  const capture = async (name) => {
+    const filename = path.join(output, `${name}.png`);
+    const closeToast = page.getByRole('button', { name: '알림 닫기', exact: true });
+    if (await closeToast.isVisible()) await closeToast.click();
+    await page.mouse.move(0, 0);
+    const png = await electron.evaluate(async ({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      await window.webContents.insertCSS('*{animation:none!important;transition:none!important}');
+      window.webContents.invalidate();
+      await window.webContents.capturePage();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const image = await window.webContents.capturePage();
+      return image.toPNG().toString('base64');
+    });
+    await fs.writeFile(filename, Buffer.from(png, 'base64'));
+    report.screenshots.push(filename);
+  };
+  const check = (condition, message) => { assert.ok(condition, message); report.passed.push(message); };
+  try {
+    page = await electron.firstWindow({ timeout: 45000 });
+    page.on('pageerror', (error) => report.errors.push(error.message));
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setBackgroundThrottling(false));
+    await page.waitForFunction(() => Boolean(window.launcher));
+    const userData = await electron.evaluate(({ app }) => app.getPath('userData'));
+    check(path.resolve(userData) === path.join(root, 'test-results', 'ui-data'), 'isolated Electron userData directory');
+    await page.evaluate(() => localStorage.removeItem('cobble-onboarding-seen'));
+    await page.reload();
+    await page.getByRole('dialog').waitFor();
+    report.initial = await page.evaluate(() => window.launcher.getState());
+    check(report.initial.auth.status === 'signed-out' && report.initial.profile === null, 'real signed-out account state');
+    check(report.initial.server.status === 'unconfigured', 'unconfigured server shown honestly');
+    await capture('onboarding');
+    await page.getByRole('button', { name: '로그인 설정 시작하기', exact: true }).click();
+    await page.getByLabel('애플리케이션 Client ID').waitFor();
+    check(await page.getByRole('button', { name: '계정 및 연결', exact: true }).getAttribute('class') === 'active', 'onboarding opens Microsoft configuration directly');
+    await page.getByLabel('애플리케이션 Client ID').fill('invalid-client-id');
+    await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'UUID' }).waitFor();
+    check((await page.evaluate(() => window.launcher.getState())).settings.microsoftClientId === '', 'invalid Client ID prevented before IPC save');
+    await page.getByLabel('애플리케이션 Client ID').fill('');
+    await page.getByRole('button', { name: '게임 환경', exact: true }).click();
+    const memory = page.getByRole('slider', { name: '게임 메모리 할당량' });
+    const before = Number(await memory.inputValue());
+    await memory.focus();
+    await memory.press(before > 2048 ? 'ArrowLeft' : 'ArrowRight');
+    const desired = Number(await memory.inputValue());
+    check(desired !== before, 'memory slider changes draft value');
+    await page.getByRole('button', { name: '설정 저장', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '설정을 저장했습니다.' }).waitFor();
+    const saved = await page.evaluate(() => window.launcher.getState());
+    check(saved.settings.memoryMb === desired, 'real IPC setting saved without readonly-field rejection');
+    await page.getByRole('button', { name: '파일 및 진단', exact: true }).click();
+    await page.getByRole('heading', { name: '최근 실행 기록' }).waitFor();
+    check(await page.getByRole('button', { name: '파일 검사 및 복구', exact: true }).isDisabled(), 'repair disabled before installation');
+    await capture('diagnostics');
+    const menu = page.getByRole('navigation', { name: '주 메뉴' });
+    await menu.getByRole('button', { name: '게임 가이드', exact: true }).click();
+    await page.getByRole('heading', { name: /첫 모험을 위한 안내/ }).waitFor();
+    await page.getByText('Minecraft를 별도로 구매해야 하나요?', { exact: true }).click();
+    check(await page.getByText('네. Minecraft Java Edition을 플레이할 수 있는 정식 Microsoft 계정이 필요합니다.', { exact: false }).isVisible(), 'guide FAQ expands');
+    await capture('guide');
+    await menu.getByRole('button', { name: '업데이트 소식', exact: true }).click();
+    await page.getByRole('button', { name: '업데이트 확인', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '업데이트 확인을 완료했습니다.' }).waitFor();
+    check((await page.evaluate(() => window.launcher.getState())).update.status === 'unconfigured', 'real update check preserves unconfigured status');
+    await page.getByRole('button', { name: /^패치 노트/ }).click();
+    await page.getByText('패치 노트를 기다리고 있어요', { exact: true }).waitFor();
+    await capture('updates');
+    await menu.getByRole('button', { name: '계정', exact: true }).click();
+    await page.getByRole('heading', { name: /내 계정/ }).waitFor();
+    await capture('account');
+    await menu.getByRole('button', { name: '홈', exact: true }).click();
+    await page.getByText('나만의 모험이 시작되는 곳', { exact: true }).waitFor();
+    check(await page.getByRole('button', { name: '로그인하고 시작하기', exact: true }).isVisible(), 'real home action asks for login before launch');
+    await capture('home');
+    await electron.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.setSize(1000, 700);
+    });
+    await page.waitForFunction(() => window.innerWidth <= 1000);
+    const layout = await page.evaluate(() => {
+      const documentWidth = document.documentElement.scrollWidth;
+      const header = document.querySelector('.header-account').getBoundingClientRect();
+      const dock = document.querySelector('.launch-button').getBoundingClientRect();
+      return {
+        overflow: documentWidth > window.innerWidth,
+        controlsClear: header.right <= window.innerWidth - 140,
+        actionVisible: dock.bottom <= window.innerHeight && dock.right <= window.innerWidth,
+        width: window.innerWidth, height: window.innerHeight,
+      };
+    });
+    check(!layout.overflow, '1000x700 layout has no horizontal overflow');
+    check(layout.controlsClear, 'native Windows titlebar control area remains clear');
+    check(layout.actionVisible, 'primary action remains visible at minimum tested window');
+    await capture('home-1000x700');
+    report.final = await page.evaluate(() => window.launcher.getState());
+    check(report.errors.length === 0, 'no renderer JavaScript errors');
+    check(!report.final.logs.some((log) => ['error', 'renderer'].includes(log.level)), 'no Electron renderer or backend errors in UI flow');
+
+    // Deliberately invalid requests below must be rejected by main-process IPC,
+    // independently of disabled buttons and renderer-side validation.
+    const reject = async (method, argument) => {
+      const result = await page.evaluate(async ({ method, argument }) => {
+        try { await window.launcher[method](argument); return { rejected: false, message: '' }; }
+        catch (error) { return { rejected: true, message: String(error) }; }
+      }, { method, argument });
+      if (result.rejected) report.security.expectedDenials.push({ method, message: result.message });
+      return result;
+    };
+    const fixtureKey = 'cobble-ui-safe-storage-fixture-not-a-real-key-20261009';
+    check(await electron.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable()), 'Windows safeStorage encryption available');
+    await page.evaluate((key) => window.launcher.saveSettings({ curseforgeApiKey: key }), fixtureKey);
+    fixtureStored = true;
+    const configured = await page.evaluate(() => window.launcher.getState());
+    check(configured.settings.curseforgeApiKeyConfigured === true, 'dummy credential configures real encrypted vault');
+    check(!JSON.stringify(configured).includes(fixtureKey), 'getState and in-memory logs exclude plaintext credential');
+    const settingsText = await fs.readFile(path.join(userData, 'settings.json'), 'utf8');
+    check(!settingsText.includes(fixtureKey) && !Object.hasOwn(JSON.parse(settingsText), 'curseforgeApiKey'), 'settings JSON excludes plaintext credential field and value');
+    const encryptedFile = path.join(userData, 'credentials', 'curseforge.encrypted');
+    const encrypted = await fs.readFile(encryptedFile);
+    report.security.encryptedCredentialBytes = encrypted.length;
+    check(encrypted.length > 0 && !encrypted.includes(Buffer.from(fixtureKey)) && !encrypted.includes(Buffer.from(fixtureKey, 'utf16le')), 'credential file bytes exclude UTF-8 and UTF-16 plaintext');
+    const logText = await fs.readFile(path.join(userData, 'logs', 'launcher.log'), 'utf8');
+    check(!logText.includes(fixtureKey), 'persisted launcher logs exclude plaintext credential');
+
+    await electron.evaluate(({ BrowserWindow }) => {
+      globalThis.__cobbleUiOutgoing = [];
+      globalThis.__cobbleUiOriginalFetch = globalThis.fetch;
+      globalThis.fetch = (...args) => {
+        globalThis.__cobbleUiOutgoing.push(String(args[0]));
+        return Promise.reject(new Error('UI security test blocks unexpected Node fetch.'));
+      };
+      BrowserWindow.getAllWindows()[0].webContents.session.webRequest.onBeforeRequest(
+        { urls: ['http://*/*', 'https://*/*'] },
+        (details, callback) => { globalThis.__cobbleUiOutgoing.push(details.url); callback({ cancel: true }); },
+      );
+    });
+    try {
+      const deniedInstall = await reject('install');
+      check(deniedInstall.rejected && /Microsoft.*로그인/.test(deniedInstall.message), 'main IPC rejects installation while signed out before downloads');
+      const deniedLaunch = await reject('launch');
+      check(deniedLaunch.rejected && /먼저 설치/.test(deniedLaunch.message), 'main IPC rejects launch before game installation');
+      report.security.networkRequests = await electron.evaluate(() => globalThis.__cobbleUiOutgoing.length);
+      check(report.security.networkRequests === 0, 'signed-out install and premature launch make no network requests');
+    } finally {
+      await electron.evaluate(({ BrowserWindow }) => {
+        globalThis.fetch = globalThis.__cobbleUiOriginalFetch;
+        BrowserWindow.getAllWindows()[0].webContents.session.webRequest.onBeforeRequest(null);
+      });
+    }
+    const deniedUnknown = await reject('saveSettings', { arbitraryUntrustedProperty: true });
+    check(deniedUnknown.rejected && /unrecognized|Unrecognized/.test(deniedUnknown.message), 'main IPC rejects arbitrary settings properties');
+    const deniedHttp = await reject('saveSettings', { updateUrl: 'http://example.invalid/manifest.json' });
+    check(deniedHttp.rejected, 'main IPC rejects an HTTP update channel');
+    const afterDenials = await page.evaluate(() => window.launcher.getState());
+    check(afterDenials.settings.updateUrl === '' && afterDenials.operation === null && !afterDenials.game.running && afterDenials.installation.status === 'not-installed', 'rejected IPC requests leave settings and installation unchanged');
+    check(!JSON.stringify(afterDenials).includes(fixtureKey), 'state and rejection logs still exclude dummy credential');
+    await page.evaluate(() => window.launcher.saveSettings({ curseforgeApiKey: '' }));
+    fixtureStored = false;
+    report.final = await page.evaluate(() => window.launcher.getState());
+    check(report.final.settings.curseforgeApiKeyConfigured === false, 'empty credential clears real vault configuration');
+    const credentialRemains = await fs.stat(encryptedFile).then(() => true, (error) => { if (error.code === 'ENOENT') return false; throw error; });
+    check(!credentialRemains, 'cleared credential removes encrypted file');
+    check(report.errors.length === 0 && !report.final.logs.some((log) => log.level === 'renderer'), 'security rejection tests produce no renderer errors');
+  } catch (error) {
+    report.errors.push(error.stack || String(error));
+    if (page) await capture('failure').catch(() => {});
+    throw error;
+  } finally {
+    if (fixtureStored && page) {
+      await page.evaluate(() => window.launcher.saveSettings({ curseforgeApiKey: '' })).catch((error) => report.errors.push(`Fixture cleanup failed: ${error.message}`));
+    }
+    await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
+    await electron.close().catch(() => {});
+    console.log(JSON.stringify({ passed: report.passed.length, errors: report.errors, output }, null, 2));
+  }
+}
+
+main().catch((error) => { console.error(error); process.exitCode = 1; });
