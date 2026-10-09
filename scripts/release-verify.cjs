@@ -11,7 +11,7 @@ const forbidden=entries.filter(file=>/^\/(private|test-results|tests|modpack|MCP
 assert.equal(forbidden.length,0,'User/game/test/private files must not be packaged');
 const digest=data=>crypto.createHash('sha256').update(data).digest('hex');
 assert.equal(digest(extract('build/main/index.js')),digest(fs.readFileSync(path.join(root,'build/main/index.js'))),'Packaged main must match the final build');
-for(const file of ['login-window.js','login-navigation.js']) assert.equal(digest(extract(`build/main/${file}`)),digest(fs.readFileSync(path.join(root,'build/main',file))),'Packaged login popup must match the final build');
+for(const file of ['auth.js','login-window.js','login-navigation.js']) assert.equal(digest(extract(`build/main/${file}`)),digest(fs.readFileSync(path.join(root,'build/main',file))),'Packaged login popup must match the final build');
 assert.ok(extract('THIRD-PARTY-NOTICES.txt').length>1000);
 assert.ok(extract('LICENSE').toString().includes('MIT License'));
 const configuration=JSON.parse(extract('resources/deployment.json'));
@@ -23,6 +23,6 @@ assert.ok(smoke.ui.hasBridge);assert.equal(smoke.errors.length,0);
 assert.equal(smoke.state.appVersion,version,'Installed smoke must use the current version');
 const ui=JSON.parse(fs.readFileSync(path.join(root,'test-results/ui-electron/report.json'),'utf8'));
 assert.equal(ui.errors.length,0);
-const report={version,verifiedAt:new Date().toISOString(),installer:{path:file,size:fs.statSync(file).size,sha256:digest(fs.readFileSync(file)),codeSigned:false},packagedMainMatches:true,privateContentExcluded:true,thirdPartyNoticesIncluded:true,installedExeSmokePassed:true,nsisLocalInstallExitCode:0,nsisLocalUninstallExitCode:null,newPcTested:false,uiChecks:ui.passed.length,automatedChecks:57,realMinecraftBaseInstallation:JSON.parse(fs.readFileSync(path.join(root,'test-results/minecraft-install.json'),'utf8')),realMicrosoftLoginTested:false,realFullModpackInstallationTested:false,realModpackGameLaunchTested:false};
+const report={version,verifiedAt:new Date().toISOString(),installer:{path:file,size:fs.statSync(file).size,sha256:digest(fs.readFileSync(file)),codeSigned:false},packagedMainMatches:true,privateContentExcluded:true,thirdPartyNoticesIncluded:true,installedExeSmokePassed:true,nsisLocalInstallExitCode:0,nsisLocalUninstallExitCode:null,newPcTested:false,uiChecks:ui.passed.length,automatedChecks:67,realMinecraftBaseInstallation:JSON.parse(fs.readFileSync(path.join(root,'test-results/minecraft-install.json'),'utf8')),realMicrosoftLoginTested:false,realFullModpackInstallationTested:false,realModpackGameLaunchTested:false};
 fs.writeFileSync(path.join(root,'test-results/release-verification.json'),JSON.stringify(report,null,2));
 console.log(JSON.stringify({passed:true,installerSize:report.installer.size,sha256:report.installer.sha256,uiChecks:report.uiChecks,automatedChecks:report.automatedChecks}));

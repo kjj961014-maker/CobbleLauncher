@@ -93,6 +93,60 @@ test('Xbox family restrictions have a useful error without leaking server data',
     error => error instanceof AuthError && error.code === 'XBOX_FAMILY' && !error.message.includes('private server detail'));
 });
 
+for (const entry of [
+  { endpoint:'user.auth.xboxlive.com', status:401, body:'', stage:'Xbox 계정 인증', code:'OAUTH' },
+  { endpoint:'xsts.auth.xboxlive.com', status:400, body:'', stage:'Xbox 게임 권한 확인', code:'OAUTH' },
+  { endpoint:'/login_with_xbox', status:403, body:'<html>private-denial-token</html>', stage:'Minecraft 로그인', code:'APP_APPROVAL' },
+  { endpoint:'/login_with_xbox', status:403, body:'', stage:'Minecraft 로그인', code:'APP_APPROVAL' },
+  { endpoint:'/minecraft/profile', status:404, body:'', stage:'Minecraft 프로필 확인', code:'OWNERSHIP' },
+  { endpoint:'/token', status:503, body:'<html>private-denial-token</html>', stage:'Microsoft 토큰 교환', code:'NETWORK' },
+  { endpoint:'/token', status:429, body:'', stage:'Microsoft 토큰 교환', code:'OAUTH' },
+]) {
+  test(`HTTP ${entry.status} at ${entry.stage} survives an empty/non-JSON response`, async () => {
+    const normal = authFetch();
+    const diagnostic: unknown[] = [];
+    await assert.rejects(refresh(clientId, 'private-refresh-token', {
+      fetch: (input, init) => String(input).includes(entry.endpoint) ?
+        Promise.resolve(new Response(entry.body, { status:entry.status })) : normal(input, init),
+      onDiagnostic: result => diagnostic.push(result),
+    }), error => error instanceof AuthError && error.code === entry.code &&
+      error.message.includes(entry.stage) && error.message.includes(`HTTP ${entry.status}`) &&
+      !error.message.includes('private-denial-token') && !error.message.includes('private-refresh-token'));
+    assert.deepEqual(diagnostic.at(-1), {stage:entry.stage, status:entry.status, format:entry.body ? 'non-json' : 'empty'});
+  });
+}
+
+test('HTTP 200 with HTML is never accepted as a valid authentication result', async () => {
+  await assert.rejects(refresh(clientId, 'private-refresh-token', {
+    fetch: async () => new Response('<html>private-denial-token</html>', { status:200 }),
+  }), error => error instanceof AuthError && error.code === 'RESPONSE' &&
+    error.message.includes('Microsoft 토큰 교환') && error.message.includes('HTTP 200') &&
+    !error.message.includes('private-denial-token'));
+});
+
+test('Microsoft configuration diagnostics expose only numeric AADSTS codes', async () => {
+  await assert.rejects(refresh(clientId, 'private-refresh-token', {
+    fetch: async () => new Response(JSON.stringify({
+      error:'invalid_client', error_codes:[7000218, 'private-denial-token', -1, 1.5, Infinity],
+      error_description:'private-denial-token private-refresh-token',
+    }), { status:400 }),
+  }), error => error instanceof AuthError && error.code === 'CONFIGURATION' &&
+    error.message.includes('AADSTS7000218') && error.message.includes('HTTP 400') &&
+    !error.message.includes('private-denial-token') && !error.message.includes('private-refresh-token'));
+});
+
+test('successful authentication diagnostics contain only stage, HTTP status and response format', async () => {
+  const diagnostics: unknown[] = [];
+  await refresh(clientId, 'private-refresh-token', { fetch:authFetch(), onDiagnostic:result => diagnostics.push(result) });
+  assert.equal(diagnostics.length, 6);
+  for (const result of diagnostics as Record<string, unknown>[]) {
+    assert.deepEqual(Object.keys(result).sort(), ['format','stage','status']);
+    assert.equal(result.status, 200);
+    assert.equal(result.format, 'json');
+  }
+  assert.doesNotMatch(JSON.stringify(diagnostics), /access|refresh|1234|CobblePlayer|https?:/);
+});
+
 test('cancellation and timeout release the loopback listener', async () => {
   const controller = new AbortController();
   let callback: URL | undefined;

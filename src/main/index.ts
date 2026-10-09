@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { launch as launchGame, Version } from '@xmcl/core';
 import { z } from 'zod';
 import type { LauncherState, Settings } from '../shared/types';
-import { authenticate, refresh, type Session } from './auth';
+import { authenticate, refresh, type Session, type AuthDiagnostic } from './auth';
 import { openLoginWindow, type LoginWindow } from './login-window';
 import { installMinecraft } from './minecraft';
 import { installModpack, ensurePackArchive, recoverModpack, type PackCatalog } from './modpack';
@@ -142,10 +142,13 @@ async function launch() {
 async function refreshSession(signal:AbortSignal):Promise<void> {
   if(!session||sessionClientId!==state.settings.microsoftClientId)throw new Error('Microsoft 정품 계정으로 로그인하세요.');
   const identity=session;const clientId=state.settings.microsoftClientId;
-  const next=await refresh(clientId,identity.refreshToken,{signal});
+  const next=await refresh(clientId,identity.refreshToken,{signal,onDiagnostic:authDiagnostic});
   if(session!==identity||clientId!==state.settings.microsoftClientId)throw new Error('계정이 변경되었습니다. 다시 로그인하세요.');
   session=next;sessionClientId=clientId;state.profile=next.profile;state.auth={status:'signed-in'};
   await vault.set('session',{session:next,clientId});publish(true);
+}
+function authDiagnostic(result:AuthDiagnostic) {
+  log('info',`인증 응답: ${result.stage} · HTTP ${result.status} · ${result.format}`);
 }
 const settingsSchema=z.object({gameDirectory:z.string().min(3).max(500).optional(),packArchivePath:z.string().max(1000).optional(),memoryMb:z.number().int().min(2048).max(65536).optional(),microsoftClientId:z.union([z.literal(''),z.string().uuid()]).optional(),curseforgeApiKey:z.string().max(1000).optional(),updateUrl:z.union([z.literal(''),z.url().refine(v=>new URL(v).protocol==='https:')]).optional(),updatePublicKey:z.string().max(4000).optional(),serverHost:z.string().max(253).regex(/^[a-zA-Z0-9.\-:]*$/).optional(),serverPort:z.number().int().min(1).max(65535).optional(),closeOnLaunch:z.boolean().optional()}).strict();
 const externalHosts=new Set(['login.microsoftonline.com','www.curseforge.com','console.curseforge.com','learn.microsoft.com','aka.ms','help.minecraft.net','www.minecraft.net']);
@@ -187,7 +190,7 @@ async function initialize() {
             onProblem:message=>{if(pendingLoginUrl&&!signal.aborted){loginProblem=message;state.auth={status:'signing-in',message};publish(true);}},
           });
           return loginWindow.ready;
-        },signal,
+        },signal,onDiagnostic:authDiagnostic,
         onAuthorizationUrl:url=>{pendingLoginUrl=url;},
         onProgress:stage=>{
           const message=stage==='opening'?'Microsoft 로그인 팝업을 열고 있습니다.':stage==='waiting'?(loginProblem??'별도 팝업에서 Microsoft 로그인을 완료해 주세요.'):'Minecraft 사용 권한과 프로필을 확인하고 있습니다.';

@@ -1,6 +1,6 @@
 # 개발 검증 기록
 
-검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.2 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
+검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.3 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
 
 ## 실제 파일·프로세스로 확인한 항목
 
@@ -14,7 +14,7 @@
 | NeoForge | 공식 21.1.252 installer와 실제 Java processor 실행 완료. core로 설치된 버전 JSON과 라이브러리 해석 성공 |
 | 재설치/캐시 | 같은 테스트 instance에 설치를 다시 실행해 정상 파일을 재사용하고 강화한 경로·호스트 검증 통과 |
 | Electron | TypeScript·Vite production 빌드, Electron 창·preload IPC 실제 실행 및 화면 캡처 통과 |
-| UI 조작 | 실제 Electron 격리 프로필에서 첫 안내·설정 저장·5개 메뉴·최소1000×700 배치·오류 없는 렌더링·Windows safeStorage 암호화·평문 키 비노출·인증 없는 설치 차단·로그인 팝업 격리·취소·자동 닫기 등 45개 검사 통과. 최신 세부 기록은 test-results/ui-electron/report.json |
+| UI 조작 | 실제 Electron 격리 프로필에서 첫 안내·설정 저장·5개 메뉴·최소1000×700 배치·오류 없는 렌더링·Windows safeStorage 암호화·평문 키 비노출·인증 없는 설치 차단·로그인 팝업 격리·취소·자동 닫기 등 47개 검사 통과. 최신 세부 기록은 test-results/ui-electron/report.json |
 | 패키징 | Windows x64 NSIS 설치형 EXE 생성. 개발 PC의 격리 설치 폴더에 실제 NSIS 설치(종료0)→설치된 EXE와 IPC smoke 검사→테스트 설치 제거(종료0) 통과. win-unpacked 패키지 실행도 통과. 최종 바이너리 해시는 test-results/release-verification.json |
 | 운영 CLI | 테스트용 개인키 생성·공지 초안 서명·서명 재검증 실행 통과. 테스트 개인키는 private 아래로 배포에서 제외 |
 | 라이선스 | production 의존성 고지 생성. 게임/모드/팩 ZIP/overrides/셰이더/MCP 자료/테스트 자격증명은 EXE에 포함하지 않음 |
@@ -23,7 +23,7 @@
 
 ## 통제된 응답과 실제 임시 파일로 검증한 항목
 
-`npm test`는 현재 57개 테스트가 통과했습니다. 새 변경 후의 정확한 합계는 실행 결과를 기준으로 합니다.
+`npm test`는 현재 67개 테스트가 통과했습니다. 새 변경 후의 정확한 합계는 실행 결과를 기준으로 합니다.
 
 - 공식 OAuth PKCE/state·callback 위조·취소·시간 초과·토큰 갱신·Xbox 사용자 불일치·가족 제한·Java 소유권 거부: 실제 loopback 서버와 통제된 인증 응답 사용. 실제 Microsoft 로그인을 대체한 완료 판정이 아닙니다.
 - HTTPS redirect·호스트 제한·자격증명 헤더 제거·Range 206/200/416·스트림 중단·완성 캐시·해시 오류·빈 파일 패치: 통제된 HTTP 응답과 실제 파일 쓰기 사용.
@@ -66,3 +66,15 @@ OS 브라우저 실행 Promise가 끝나지 않아도 정상 callback·취소·5
 별도 임시 프로필에서 실제 등록 앱의 Microsoft 페이지가 팝업에 표시되는 것을 캡처했습니다(`test-results/popup-live/microsoft-popup.png`). 확인 시점에는 Microsoft가 `redirect_uri is not valid`를 반환했습니다. 운영자가 Azure의 모바일 및 데스크톱 애플리케이션 설정에 `http://localhost/callback`을 등록해야 합니다. 이 주소를 브라우저로 직접 방문하는 절차가 아님을 사용 안내에 명시했습니다. 실제 계정 로그인 성공은 아직 확인하지 않았습니다.
 
 실제 사용자 설치를 0.1.2로 업데이트했고 NSIS 종료 코드는 0입니다. 설정 JSON의 설치 전후 SHA-256이 일치하며, 설치된 EXE의 별도 QA 실행에서 0.1.2 버전·화면·IPC·오류 없음이 확인되었습니다. 설치 파일 SHA-256: `8ea2c0627ff9d23d3cada934a34ca597f556113af59bcca2ab5dabb3f84b25fd`.
+
+## 0.1.3 인증 응답 오류 분류
+
+운영자가 Azure에 loopback 반환 주소를 등록한 뒤, 실제 사용자 로그에서 `인증 서버 응답을 읽을 수 없습니다` 오류가 확인되었습니다. 이전 코드는 HTTP 상태 확인 전에 응답 본문을 JSON으로 파싱했기 때문에, 빈 응답이나 HTML 오류를 받으면 실제 실패 단계를 가렸습니다. 기존 로그만으로는 사용자 요청이 실패한 서버와 HTTP 상태를 확정할 수 없습니다.
+
+오류 응답의 HTTP 상태를 보존하고 Microsoft 토큰 교환·Xbox 인증·XSTS 권한·Minecraft 로그인·소유권·프로필 단계를 구분하도록 변경했습니다. Minecraft 로그인 HTTP 403, 프로필 404, 사용량 제한 429, 서비스 오류 5xx는 JSON 본문이 없어도 각각 처리합니다. HTTP 200의 잘못된 본문은 성공으로 인정하지 않습니다. Microsoft 오류 코드는 검증된 숫자 AADSTS 코드만 표시합니다.
+
+진단 로그에는 고정된 단계명·HTTP 번호·json/empty/non-json 구분만 남깁니다. 인증 코드·토큰·계정 식별자·원본 서버 본문은 진단에 전달하지 않습니다. 의도적으로 유효하지 않은 진단용 입력으로 Xbox의 빈 HTTP 401 및 XSTS의 빈 HTTP 400 응답을 확인했으나, 이는 사용자의 실제 실패 단계가 같다는 증거는 아닙니다.
+
+기본 검사 67개와 실제 Electron UI 검사 47개가 통과했습니다. UI 검사에서는 빈 Xbox 401 응답 이후 정확한 단계 표시·프로필 미생성·재시도 가능·진단 로그의 비밀 값 제외를 확인했습니다. 실제 사용자 로그인은 수정된 버전에서 재시도하여 확인해야 합니다. 설치 파일 SHA-256: `0ee14c263caad854b0ec451f328f79e02ddc0f5ea605c2f261631df5af2144fa`.
+
+사용자 설치 경로를 0.1.3으로 업데이트했고 NSIS 종료 코드는 0입니다. 설정 파일은 설치 전후 SHA-256이 일치하며, 설치된 EXE의 격리 smoke 검사와 최종 ASAR/auth·main·popup 파일 일치 검사를 통과했습니다.

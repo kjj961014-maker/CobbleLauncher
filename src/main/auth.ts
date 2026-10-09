@@ -30,6 +30,55 @@ export interface AuthOptions {
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
+  onDiagnostic?: (result: AuthDiagnostic) => void;
+}
+
+export interface AuthDiagnostic {
+  stage: string;
+  status: number;
+  format: 'json' | 'empty' | 'non-json';
+}
+
+function authStage(url: string): string {
+  if (url === `${AUTHORITY}/token`) return 'Microsoft 토큰 교환';
+  if (url === XBOX_AUTH) return 'Xbox 계정 인증';
+  if (url === XSTS_AUTH) return 'Xbox 게임 권한 확인';
+  if (url === `${MINECRAFT}/authentication/login_with_xbox`) return 'Minecraft 로그인';
+  if (url === `${MINECRAFT}/entitlements/mcstore`) return 'Minecraft 소유권 확인';
+  if (url === `${MINECRAFT}/minecraft/profile`) return 'Minecraft 프로필 확인';
+  return '계정 인증';
+}
+
+function responseError(url: string, status: number, payload?: Record<string, unknown>): AuthError {
+  const detail = `${authStage(url)}, HTTP ${status}`;
+  if (status === 429) return new AuthError('OAUTH', `인증 요청이 너무 많습니다 (${detail}). 잠시 후 다시 로그인하세요.`);
+  if (status >= 500) return new AuthError('NETWORK', `인증 서비스에 일시적인 오류가 있습니다 (${detail}). 잠시 후 다시 시도하세요.`);
+  if (url === XSTS_AUTH && payload?.XErr === 2148916233) {
+    return new AuthError('XBOX_PROFILE', `Xbox 프로필을 먼저 생성한 뒤 다시 로그인하세요 (${detail}).`);
+  }
+  if (url === XSTS_AUTH && payload?.XErr === 2148916238) {
+    return new AuthError('XBOX_FAMILY', `Microsoft 가족의 보호자 계정에서 Xbox 이용 권한을 확인하세요 (${detail}).`);
+  }
+  if (url === `${MINECRAFT}/authentication/login_with_xbox` && status === 403) {
+    return new AuthError('APP_APPROVAL', `Minecraft 인증 접근이 거부되었습니다 (${detail}). 운영자의 Minecraft Services 앱 승인과 계정 권한을 확인하세요.`);
+  }
+  if (url === `${MINECRAFT}/minecraft/profile` && status === 404) {
+    return new AuthError('OWNERSHIP', `Minecraft Java Edition 프로필을 찾을 수 없습니다 (${detail}). 게임 소유권과 프로필 생성을 확인하세요.`);
+  }
+  if (url === `${AUTHORITY}/token`) {
+    // Never copy error_description: it can echo codes, tokens or account data.
+    const codes = Array.isArray(payload?.error_codes) ? payload.error_codes.filter((value): value is number =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 999999999).slice(0, 3) : [];
+    const suffix = codes.length ? `, ${codes.map(code => `AADSTS${code}`).join(', ')}` : '';
+    if (codes.includes(7000218) || payload?.error === 'unauthorized_client') {
+      return new AuthError('CONFIGURATION', `Microsoft 앱 설정을 확인하세요 (${detail}${suffix}). 반환 주소를 모바일 및 데스크톱 애플리케이션에 등록해야 합니다.`);
+    }
+    return new AuthError('OAUTH', `Microsoft 인증 요청이 거부되었습니다 (${detail}${suffix}). 새 로그인 창에서 다시 시도하세요.`);
+  }
+  if (url === XBOX_AUTH || url === XSTS_AUTH) {
+    return new AuthError('OAUTH', `Xbox 인증이 거부되었습니다 (${detail}). Xbox 계정의 프로필·이용 권한과 런처 앱 설정을 확인하세요.`);
+  }
+  return new AuthError('OAUTH', `인증 서버가 요청을 거부했습니다 (${detail}). 다시 로그인하세요.`);
 }
 
 export interface AuthenticateOptions extends AuthOptions {
@@ -67,6 +116,7 @@ function nonempty(value: unknown): string {
 
 async function requestJson(url: string, init: RequestInit, options: AuthOptions): Promise<Record<string, unknown>> {
   checkCancelled(options.signal);
+  const stage = authStage(url);
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener('abort', abort, { once: true });
@@ -77,32 +127,24 @@ async function requestJson(url: string, init: RequestInit, options: AuthOptions)
       headers: { Accept: 'application/json', ...init.headers },
     });
     const text = await response.text();
-    if (text.length > 1024 * 1024) throw new AuthError('RESPONSE', '인증 서버 응답이 너무 큽니다.');
-    let payload: Record<string, unknown>;
-    try { payload = object(JSON.parse(text)); }
-    catch { throw new AuthError('RESPONSE', '인증 서버 응답을 읽을 수 없습니다.'); }
-    if (!response.ok) {
-      if (url === XSTS_AUTH && payload.XErr === 2148916233) {
-        throw new AuthError('XBOX_PROFILE', 'Xbox 프로필을 먼저 생성한 뒤 다시 로그인하세요.');
-      }
-      if (url === XSTS_AUTH && payload.XErr === 2148916238) {
-        throw new AuthError('XBOX_FAMILY', 'Microsoft 가족의 보호자 계정에서 Xbox 이용 권한을 확인하세요.');
-      }
-      if (url.startsWith(MINECRAFT) && response.status === 403) {
-        throw new AuthError('APP_APPROVAL', 'Minecraft 인증 접근이 거부되었습니다. 운영자의 앱 승인과 계정 권한을 확인하세요.');
-      }
-      if (url.endsWith('/minecraft/profile') && response.status === 404) {
-        throw new AuthError('OWNERSHIP', 'Minecraft Java Edition 프로필을 찾을 수 없습니다. 게임 소유권과 프로필 생성을 확인하세요.');
-      }
-      throw new AuthError('OAUTH', `인증 서버가 요청을 거부했습니다 (HTTP ${response.status}). 다시 로그인하세요.`);
+    checkCancelled(options.signal);
+    let payload: Record<string, unknown> | undefined;
+    if (text.length <= 1024 * 1024) {
+      try { payload = object(JSON.parse(text)); } catch { /* Error responses may be empty or HTML. */ }
     }
+    const format = payload ? 'json' : text.trim() ? 'non-json' : 'empty';
+    options.onDiagnostic?.({ stage, status: response.status, format });
+    // Preserve HTTP errors even when the server sends no JSON response body.
+    if (!response.ok) throw responseError(url, response.status, payload);
+    if (text.length > 1024 * 1024) throw new AuthError('RESPONSE', `인증 서버 응답이 너무 큽니다 (${stage}, HTTP ${response.status}).`);
+    if (!payload) throw new AuthError('RESPONSE', `인증 서버의 응답 형식이 올바르지 않습니다 (${stage}, HTTP ${response.status}, ${format === 'empty' ? '빈 응답' : 'JSON 아님'}). 다시 시도하세요.`);
     checkCancelled(options.signal);
     return payload;
   } catch (error) {
     if (error instanceof AuthError) throw error;
     if (options.signal?.aborted) throw new AuthError('CANCELLED', '로그인이 취소되었습니다.');
-    if (controller.signal.aborted) throw new AuthError('TIMEOUT', '인증 서버 연결 시간이 초과되었습니다.');
-    throw new AuthError('NETWORK', '인증 서버에 연결하지 못했습니다. 네트워크 상태를 확인하세요.');
+    if (controller.signal.aborted) throw new AuthError('TIMEOUT', `인증 서버 연결 시간이 초과되었습니다 (${stage}).`);
+    throw new AuthError('NETWORK', `인증 서버에 연결하지 못했습니다 (${stage}). 네트워크 상태를 확인하세요.`);
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', abort);

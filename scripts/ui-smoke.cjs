@@ -286,6 +286,28 @@ async function main() {
       check(callbackStatus === 200 && await electron.evaluate(() => globalThis.__cobblePopupClosedAtExchange), 'verified callback automatically closes popup before token exchange without cancelling authentication');
       check((await page.evaluate(() => window.launcher.getState())).profile.name === 'PopupFixture', 'popup flow completes ownership and profile validation using explicit test fixtures');
       await page.evaluate(() => window.launcher.logout());
+
+      // A server may reject authentication with an empty body. The real IPC/UI
+      // must retain the HTTP stage and release the operation for another login.
+      await electron.evaluate(() => {
+        const normal = globalThis.fetch;
+        globalThis.fetch = (url, init) => url.includes('user.auth.xboxlive.com') ?
+          Promise.resolve(new Response('', { status:401 })) : normal(url, init);
+      });
+      await page.getByRole('button', { name: 'Microsoft 계정 로그인', exact: true }).click();
+      await page.getByRole('button', { name: '로그인 취소', exact: true }).waitFor();
+      await electron.evaluate(async () => {
+        const authorization = new URL(globalThis.__cobblePopupUrl);
+        const callback = new URL(authorization.searchParams.get('redirect_uri'));
+        callback.hostname = '127.0.0.1';
+        callback.search = new URLSearchParams({ code:'ui-code-fixture', state:authorization.searchParams.get('state') });
+        await globalThis.__cobbleOriginalAuthFetch(callback);
+      });
+      await page.waitForFunction(async () => (await window.launcher.getState()).auth.status === 'error' && !(await window.launcher.getState()).operation);
+      const deniedAuth = await page.evaluate(() => window.launcher.getState());
+      check(deniedAuth.auth.message.includes('Xbox 계정 인증, HTTP 401') && !deniedAuth.profile && !await page.getByRole('button', { name:'Microsoft 계정 로그인', exact:true }).isDisabled(), 'empty Xbox HTTP rejection shows its real stage and allows retry without creating a profile');
+      check(deniedAuth.logs.some(entry => entry.message === '인증 응답: Xbox 계정 인증 · HTTP 401 · empty') && !/ui-ms-fixture|ui-refresh-fixture|ui-code-fixture|ui-xbox-fixture|ui-minecraft-fixture/.test(JSON.stringify(deniedAuth)), 'authentication diagnostics identify HTTP failures without codes or tokens in renderer state');
+      await capture('login-http-denial');
     } finally {
       await page.evaluate(() => window.launcher.cancelOperation());
       await page.waitForFunction(async () => !(await window.launcher.getState()).operation);
