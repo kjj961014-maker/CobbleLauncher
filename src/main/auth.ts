@@ -175,7 +175,8 @@ async function minecraftSession(oauth: Record<string, unknown>, previousRefreshT
   const xboxUserHash = xboxHash(xbox);
   const xsts = await requestJson(XSTS_AUTH, jsonPost({
     Properties: { SandboxId: 'RETAIL', UserTokens: [nonempty(xbox.Token)] },
-    RelyingParty: 'https://api.minecraftservices.com/', TokenType: 'JWT',
+    // This is an audience identifier, not the HTTPS Minecraft API endpoint.
+    RelyingParty: 'rp://api.minecraftservices.com/', TokenType: 'JWT',
   }), options);
   const userHash = xboxHash(xsts);
   if (xboxUserHash !== userHash) throw new AuthError('RESPONSE', 'Xbox 인증 사용자가 일치하지 않습니다.');

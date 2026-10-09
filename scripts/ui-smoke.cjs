@@ -256,12 +256,20 @@ async function main() {
       // This proves popup cleanup cannot cancel the subsequent token exchange.
       await electron.evaluate(({ BrowserWindow }) => {
         globalThis.__cobblePopupClosedAtExchange = false;
-        globalThis.fetch = async (url) => {
+        globalThis.fetch = async (url, init) => {
           let body;
           if (url.endsWith('/token')) {
             globalThis.__cobblePopupClosedAtExchange = BrowserWindow.getAllWindows().length === 1;
             body = { access_token:'ui-ms-fixture', refresh_token:'ui-refresh-fixture' };
           } else if (url.includes('user.auth.xboxlive.com') || url.includes('xsts.auth.xboxlive.com')) {
+            if (url.includes('xsts.auth.xboxlive.com')) {
+              const request = JSON.parse(init.body);
+              if (request.RelyingParty !== 'rp://api.minecraftservices.com/' ||
+                  request.Properties?.SandboxId !== 'RETAIL' || request.TokenType !== 'JWT' ||
+                  JSON.stringify(request.Properties?.UserTokens) !== JSON.stringify(['ui-xbox-fixture'])) {
+                return new Response('', { status:400 });
+              }
+            }
             body = { Token:'ui-xbox-fixture', DisplayClaims:{ xui:[{ uhs:'123456' }] } };
           } else if (url.endsWith('/login_with_xbox')) {
             body = { access_token:'ui-minecraft-fixture', expires_in:3600 };

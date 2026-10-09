@@ -1,6 +1,6 @@
 # 개발 검증 기록
 
-검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.3 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
+검증일: 2026-10-09 (Asia/Seoul). 현재 버전은 **0.1.4 개발 빌드**이며, 요청된 전체 런처의 최종 완료 판정은 아직 하지 않았습니다.
 
 ## 실제 파일·프로세스로 확인한 항목
 
@@ -78,3 +78,13 @@ OS 브라우저 실행 Promise가 끝나지 않아도 정상 callback·취소·5
 기본 검사 67개와 실제 Electron UI 검사 47개가 통과했습니다. UI 검사에서는 빈 Xbox 401 응답 이후 정확한 단계 표시·프로필 미생성·재시도 가능·진단 로그의 비밀 값 제외를 확인했습니다. 실제 사용자 로그인은 수정된 버전에서 재시도하여 확인해야 합니다. 설치 파일 SHA-256: `0ee14c263caad854b0ec451f328f79e02ddc0f5ea605c2f261631df5af2144fa`.
 
 사용자 설치 경로를 0.1.3으로 업데이트했고 NSIS 종료 코드는 0입니다. 설정 파일은 설치 전후 SHA-256이 일치하며, 설치된 EXE의 격리 smoke 검사와 최종 ASAR/auth·main·popup 파일 일치 검사를 통과했습니다.
+
+## 0.1.4 XSTS 대상 식별자 수정
+
+실제 사용자 로그(2026-10-09 20:13 KST)에서 Microsoft 토큰 교환 HTTP 200, Xbox 계정 인증 HTTP 200, XSTS 게임 권한 확인 HTTP 400(empty)이 확인되었습니다. XSTS 요청의 `RelyingParty`를 웹 API URL인 `https://api.minecraftservices.com/`로 잘못 지정한 구현 결함을 발견했습니다. Minecraft용 식별자인 `rp://api.minecraftservices.com/`로 수정했습니다. 실제 HTTP 요청 주소는 계속 HTTPS XSTS 엔드포인트를 사용합니다.
+
+Xbox의 relying party가 토큰 수신 서비스를 구분하는 식별자라는 점은 [Microsoft XSTS 설명](https://learn.microsoft.com/en-gb/gaming/gdk/docs/services/fundamentals/s2s-auth-calls/s2s-calls/live-title-service-calls-xbox-live)을 확인했고, Minecraft용 정확한 값은 [Prism Launcher의 인증 흐름 소스](https://github.com/PrismLauncher/PrismLauncher/blob/develop/launcher/minecraft/auth/AuthFlow.cpp)와 [prismarine-auth의 RelyingParty 정의](https://github.com/PrismarineJS/prismarine-auth/blob/master/index.d.ts)를 대조했습니다.
+
+기존 테스트의 XSTS 가상 서버는 요청 대상값을 확인하지 않고 성공 응답을 반환하여 이 오류를 잡지 못했습니다. 기본 인증 테스트와 실제 Electron UI 테스트의 가상 서버 모두 잘못된 대상값·샌드박스·토큰 종류·사용자 토큰을 HTTP 400으로 거절하도록 보강했습니다. 현재 기본 검사 67개가 통과했고, 별도의 private 복사본에 예전 오타를 복원했을 때 같은 테스트가 XSTS HTTP 400으로 실패하는 것도 확인했습니다(`test-results/xsts-regression-proof.json`). 실제 사용자 계정의 XSTS 및 이후 Minecraft 인증 성공은 수정 버전에서 재시도하여 확인해야 합니다.
+
+보강된 실제 Electron UI 검사 47개가 통과했습니다. 사용자 설치를 0.1.4로 업데이트한 NSIS 종료 코드는 0이며 설정 파일의 설치 전후 해시가 일치합니다. 설치된 0.1.4 EXE의 격리 smoke 실행과 ASAR/auth·main·popup 파일 일치 검사도 통과했습니다. 설치 파일 SHA-256: `4dc3d4e8bf1f99057517043dbfff1fc91125fd73e899cd2d66b13cd1842f2aa5`.

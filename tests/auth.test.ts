@@ -21,6 +21,14 @@ function authFetch(options: { ownsGame?: boolean; xstsError?: number; xstsHash?:
       assert.equal(JSON.parse(String(init?.body)).Properties.RpsTicket, 'd=microsoft-access');
       value = { Token: 'xbox-token', DisplayClaims: { xui: [{ uhs: '1234' }] } };
     } else if (url.includes('xsts.auth.xboxlive.com')) {
+      // Protocol contract, independently specified by the Minecraft XSTS flow.
+      // Reject a web API URL used as the audience, just as the live service did.
+      const request = JSON.parse(String(init?.body));
+      if (request.RelyingParty !== 'rp://api.minecraftservices.com/' ||
+          request.TokenType !== 'JWT' || request.Properties?.SandboxId !== 'RETAIL' ||
+          JSON.stringify(request.Properties?.UserTokens) !== JSON.stringify(['xbox-token'])) {
+        return new Response('', { status:400 });
+      }
       if (options.xstsError) { status = 401; value = { XErr: options.xstsError, Message: 'private server detail' }; }
       else value = { Token: 'xsts-token', DisplayClaims: { xui: [{ uhs: options.xstsHash ?? '1234' }] } };
     } else if (url.endsWith('/login_with_xbox')) {
@@ -36,7 +44,7 @@ function authFetch(options: { ownsGame?: boolean; xstsError?: number; xstsHash?:
   }) as typeof fetch;
 }
 
-test('PKCE login ignores a forged callback, verifies ownership and exchanges the matching verifier', async () => {
+test('PKCE login ignores a forged callback, uses the Minecraft XSTS audience and verifies ownership', async () => {
   let authorization: URL | undefined;
   const session = await authenticate(clientId, {
     fetch: authFetch({ tokenCheck(form) {

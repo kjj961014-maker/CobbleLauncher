@@ -1,6 +1,6 @@
 {
   "name": "cobble-launcher",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "공식 인증과 안전한 설치를 위한 Cobble Launcher",
   "author": "Cobble Launcher contributors",
